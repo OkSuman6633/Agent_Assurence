@@ -120,7 +120,6 @@ class AssessmentService:
         self.repo = repo
 
     async def create_assessment(self, user: AuthenticatedUser, req: AssessmentCreateRequest) -> Assessment:
-        # Support either agent_id or agent_manifest_ref
         target_agent_id = req.agent_id or req.agent_manifest_ref
         agent = None
         if target_agent_id:

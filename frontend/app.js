@@ -1,12 +1,12 @@
-// Agent Assurance Laboratory — Section 7 API Protocol Controller
-// Directly implements and visualizes the exact API contract:
-// 1. POST /v1/assessments
-// 2. POST /v1/assessments/{id}/runs
-// 3. GET /v1/runs/{id}
-// 4. GET /v1/runs/{id}/findings
-// 5. POST /v1/findings/{id}/reviews
-// 6. POST /v1/runs/{id}/report
-// 7. GET /v1/runs/{id}/compare/{other}
+// Agent Assurance Laboratory — End-to-End User Journeys (J1–J7) Controller
+// Directly implements and connects all Section 7 APIs:
+// J1: POST /v1/assessments (Create assessment project)
+// J2: POST /v1/agents (Register agent adapter & boundaries)
+// J3: GET  /v1/scenarios (Policy manifest & scenario packs)
+// J4: POST /v1/assessments/{id}/runs & GET /v1/runs/{id} (Evaluate run & progress)
+// J5: GET  /v1/runs/{id}/findings & POST /v1/findings/{id}/reviews (Review & triage)
+// J6: POST /v1/runs/{id}/report (Export assessment artifact)
+// J7: GET  /v1/runs/{id}/compare/{other} (Regression delta comparison)
 
 const API_BASE = window.location.origin.includes('8000') 
   ? window.location.origin 
@@ -14,7 +14,10 @@ const API_BASE = window.location.origin.includes('8000')
 
 // Global execution state
 const state = {
+  activeTenant: 'tenant-alpha',
+  activeRole: 'assessor',
   currentAssessmentId: null,
+  currentAgentId: null,
   currentRunId: null,
   previousRunId: null,
   currentReportId: null,
@@ -24,23 +27,35 @@ const state = {
   isHardened: false,
 };
 
+// ─── Headers Helper (Injects Active Tenant & RBAC Role) ───────────────
+function getAuthHeaders(customHeaders = {}) {
+  return {
+    'Content-Type': 'application/json',
+    'X-Tenant-ID': state.activeTenant,
+    'X-User-Role': state.activeRole,
+    ...customHeaders,
+  };
+}
+
 // ─── DOM Initialization ───────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  setupTenantAndRoleSelectors();
   setupTabs();
   setupExpressPipeline();
-  setupAssessmentEndpoint();
-  setupRunsEndpoint();
-  setupRunStatusEndpoint();
-  setupFindingsEndpoint();
-  setupReviewsEndpoint();
-  setupReportsEndpoint();
-  setupCompareEndpoint();
+  setupJourneyJ1();
+  setupJourneyJ2();
+  setupJourneyJ3();
+  setupJourneyJ4();
+  setupJourneyJ5();
+  setupJourneyJ6();
+  setupJourneyJ7();
   setupModals();
 
-  checkBackendHealth();
+  await checkBackendHealth();
+  await loadTenantData();
 });
 
-// ─── Health Check ─────────────────────────────────────────────────────
+// ─── Health Check & Tenant Setup ──────────────────────────────────────
 async function checkBackendHealth() {
   const statusDot = document.querySelector('#backend-status-pill .status-dot');
   const statusText = document.getElementById('backend-status-text');
@@ -57,6 +72,42 @@ async function checkBackendHealth() {
     statusDot.className = 'status-dot offline';
     statusText.textContent = 'API Disconnected';
   }
+}
+
+function setupTenantAndRoleSelectors() {
+  const tenantSelect = document.getElementById('tenant-select');
+  const roleSelect = document.getElementById('role-select');
+
+  tenantSelect.addEventListener('change', async () => {
+    state.activeTenant = tenantSelect.value;
+    document.querySelectorAll('.active-tenant-tag').forEach(el => el.textContent = state.activeTenant);
+    showToast(`Active organization switched to ${state.activeTenant}`, 'info');
+    await loadTenantData();
+  });
+
+  roleSelect.addEventListener('change', () => {
+    state.activeRole = roleSelect.value;
+    showToast(`Assessor role set to ${state.activeRole.toUpperCase()}`, 'info');
+  });
+}
+
+async function loadTenantData() {
+  await loadAssessmentsList();
+  await loadAgentsList();
+  await loadTenantUsage();
+}
+
+async function loadTenantUsage() {
+  try {
+    const res = await fetch(`${API_BASE}/v1/usage`, { headers: getAuthHeaders() });
+    if (res.ok) {
+      const data = await res.json();
+      const budgetEl = document.getElementById('quota-budget-text');
+      if (budgetEl && data.token_budget_remaining !== undefined) {
+        budgetEl.textContent = Number(data.token_budget_remaining).toLocaleString();
+      }
+    }
+  } catch (_) {}
 }
 
 // ─── Tab Switching ────────────────────────────────────────────────────
@@ -95,7 +146,6 @@ function showToast(message, type = 'info') {
   setTimeout(() => toast.classList.add('hidden'), 4000);
 }
 
-// ─── Helper: Format & Display API Responses ───────────────────────────
 function displayApiResponse(wrapperId, statusId, timeId, jsonId, status, duration, data) {
   const wrap = document.getElementById(wrapperId);
   const statusEl = document.getElementById(statusId);
@@ -118,7 +168,7 @@ function escapeHtml(str) {
     .replace(/'/g, '&#039;');
 }
 
-// ─── TAB 0: EXPRESS PIPELINE ──────────────────────────────────────────
+// ─── TAB 0: EXPRESS SCANNER ───────────────────────────────────────────
 function setupExpressPipeline() {
   const expressForm = document.getElementById('express-form');
   const expressUrlInput = document.getElementById('express-url-input');
@@ -187,32 +237,31 @@ function setupExpressPipeline() {
     [presetSynthVuln, presetSynthHard, presetLocal].forEach(p => p.classList.remove('active'));
   }
 
-  // Quick Action Buttons in Results
   btnGenReport.addEventListener('click', async () => {
     if (!state.currentRunId) return;
-    switchTab('tab-reports');
-    document.getElementById('report-run-id').value = state.currentRunId;
-    document.getElementById('btn-call-report').click();
+    switchTab('tab-j6-export');
+    document.getElementById('j6-run-id').value = state.currentRunId;
+    document.getElementById('btn-call-j6').click();
   });
 
   btnJumpFindings.addEventListener('click', () => {
     if (!state.currentRunId) return;
-    switchTab('tab-findings');
-    document.getElementById('findings-run-id').value = state.currentRunId;
-    document.getElementById('btn-call-findings').click();
+    switchTab('tab-j5-review');
+    document.getElementById('j5-run-id').value = state.currentRunId;
+    document.getElementById('btn-call-j5').click();
   });
 
   btnJumpCompare.addEventListener('click', () => {
-    switchTab('tab-compare');
+    switchTab('tab-j7-regression');
     if (state.currentRunId) {
-      document.getElementById('comp-current-id').value = state.currentRunId;
+      document.getElementById('j7-current-id').value = state.currentRunId;
     }
     if (state.previousRunId) {
-      document.getElementById('comp-baseline-id').value = state.previousRunId;
+      document.getElementById('j7-baseline-id').value = state.previousRunId;
     }
   });
 
-  // Execute Pipeline
+  // Execute Pipeline (J1 -> J2 -> J4 -> J5)
   expressForm.addEventListener('submit', async (e) => {
     e.preventDefault();
 
@@ -222,11 +271,11 @@ function setupExpressPipeline() {
 
     btnExpressRun.disabled = true;
     expressSpinner.classList.remove('hidden');
-    btnExpressText.textContent = 'Running Section 7 Pipeline...';
+    btnExpressText.textContent = 'Evaluating Target Agent...';
 
     consoleBox.classList.remove('hidden');
     consoleLogs.innerHTML = '';
-    consoleBadge.textContent = 'Executing Pipeline (Steps 1 → 4)...';
+    consoleBadge.textContent = 'Executing Pipeline (J1 → J4)...';
     consoleBadge.className = 'console-badge badge-running';
 
     document.getElementById('express-results').classList.add('hidden');
@@ -247,7 +296,7 @@ function setupExpressPipeline() {
     }
 
     try {
-      // ── Step 1: POST /v1/assessments ──
+      // ── Step 1: POST /v1/assessments (J1) ──
       const t0 = performance.now();
       const assessPayload = {
         title: url ? `Assessment: ${url}` : (state.isHardened ? 'Assessment: Hardened Synthetic Agent' : 'Assessment: Vulnerable Synthetic Demo'),
@@ -256,23 +305,23 @@ function setupExpressPipeline() {
       };
       const resAssess = await fetch(`${API_BASE}/v1/assessments`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Correlation-ID': 'exp-' + Date.now() },
+        headers: getAuthHeaders({ 'X-Correlation-ID': 'exp-' + Date.now() }),
         body: JSON.stringify(assessPayload),
       });
       const tAssess = Math.round(performance.now() - t0);
       const dataAssess = await resAssess.json();
 
       if (!resAssess.ok) {
-        logConsole('POST', '/v1/assessments', resAssess.status, dataAssess.detail || 'Failed', tAssess);
-        throw new Error(dataAssess.detail || `POST /v1/assessments returned ${resAssess.status}`);
+        logConsole('POST', '/v1/assessments', resAssess.status, dataAssess.message || dataAssess.detail || 'Failed', tAssess);
+        throw new Error(dataAssess.message || dataAssess.detail || `POST /v1/assessments returned ${resAssess.status}`);
       }
 
       const assessmentId = dataAssess.assessment_id;
       state.currentAssessmentId = assessmentId;
-      document.getElementById('run-assessment-id').value = assessmentId;
-      logConsole('POST', '/v1/assessments', resAssess.status, `assessment_id: ${assessmentId} (status: ${dataAssess.status})`, tAssess);
+      document.getElementById('j4-assessment-id').value = assessmentId;
+      logConsole('POST', '/v1/assessments', resAssess.status, `assessment_id: ${assessmentId} (scope_hash: ${dataAssess.scope_hash})`, tAssess);
 
-      // ── Step 2: POST /v1/assessments/{id}/runs ──
+      // ── Step 2: POST /v1/assessments/{id}/runs (J4) ──
       const t1 = performance.now();
       const runPayload = {
         scenario_pack: scenarioPack,
@@ -282,19 +331,18 @@ function setupExpressPipeline() {
       };
       const resRun = await fetch(`${API_BASE}/v1/assessments/${assessmentId}/runs`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+        headers: getAuthHeaders({
           'Idempotency-Key': 'exp-run-' + Date.now(),
           'X-Correlation-ID': 'exp-corr-' + Date.now(),
-        },
+        }),
         body: JSON.stringify(runPayload),
       });
       const tRun = Math.round(performance.now() - t1);
       const dataRun = await resRun.json();
 
       if (!resRun.ok) {
-        logConsole('POST', `/v1/assessments/${assessmentId}/runs`, resRun.status, dataRun.detail || 'Failed', tRun);
-        throw new Error(dataRun.detail || `POST /v1/assessments/{id}/runs returned ${resRun.status}`);
+        logConsole('POST', `/v1/assessments/${assessmentId}/runs`, resRun.status, dataRun.message || dataRun.detail || 'Failed', tRun);
+        throw new Error(dataRun.message || dataRun.detail || `POST /v1/assessments/{id}/runs returned ${resRun.status}`);
       }
 
       const runId = dataRun.run_id;
@@ -302,44 +350,49 @@ function setupExpressPipeline() {
         state.previousRunId = state.currentRunId;
       }
       state.currentRunId = runId;
-      document.getElementById('get-run-id').value = runId;
-      document.getElementById('findings-run-id').value = runId;
-      document.getElementById('report-run-id').value = runId;
+      document.getElementById('j5-run-id').value = runId;
+      document.getElementById('j6-run-id').value = runId;
+      document.getElementById('j7-current-id').value = runId;
+      if (state.previousRunId) {
+        document.getElementById('j7-baseline-id').value = state.previousRunId;
+      }
       logConsole('POST', `/v1/assessments/${assessmentId}/runs`, resRun.status, `run_id: ${runId} (status: ${dataRun.status})`, tRun);
 
-      // ── Step 3: GET /v1/runs/{id} ──
+      // ── Step 3: GET /v1/runs/{id} (J4 Monitor) ──
       const t2 = performance.now();
-      const resGetRun = await fetch(`${API_BASE}/v1/runs/${runId}`);
+      const resGetRun = await fetch(`${API_BASE}/v1/runs/${runId}`, { headers: getAuthHeaders() });
       const tGetRun = Math.round(performance.now() - t2);
       const dataGetRun = await resGetRun.json();
 
       if (!resGetRun.ok) {
-        logConsole('GET', `/v1/runs/${runId}`, resGetRun.status, dataGetRun.detail || 'Failed', tGetRun);
-        throw new Error(dataGetRun.detail || `GET /v1/runs/{id} returned ${resGetRun.status}`);
+        logConsole('GET', `/v1/runs/${runId}`, resGetRun.status, dataGetRun.message || 'Failed', tGetRun);
+        throw new Error(dataGetRun.message || `GET /v1/runs/{id} returned ${resGetRun.status}`);
       }
       logConsole('GET', `/v1/runs/${runId}`, resGetRun.status, `status: ${dataGetRun.status}, progress: ${dataGetRun.progress}, summary: ${JSON.stringify(dataGetRun.summary)}`, tGetRun);
 
-      // ── Step 4: GET /v1/runs/{id}/findings ──
+      // ── Step 4: GET /v1/runs/{id}/findings (J5 Findings) ──
       const t3 = performance.now();
-      const resFindings = await fetch(`${API_BASE}/v1/runs/${runId}/findings`);
+      const resFindings = await fetch(`${API_BASE}/v1/runs/${runId}/findings`, { headers: getAuthHeaders() });
       const tFindings = Math.round(performance.now() - t3);
       const dataFindings = await resFindings.json();
 
       if (!resFindings.ok) {
-        logConsole('GET', `/v1/runs/${runId}/findings`, resFindings.status, dataFindings.detail || 'Failed', tFindings);
-        throw new Error(dataFindings.detail || `GET /v1/runs/{id}/findings returned ${resFindings.status}`);
+        logConsole('GET', `/v1/runs/${runId}/findings`, resFindings.status, dataFindings.message || 'Failed', tFindings);
+        throw new Error(dataFindings.message || `GET /v1/runs/{id}/findings returned ${resFindings.status}`);
       }
       const findingsList = dataFindings.items || [];
       state.findings = findingsList;
       logConsole('GET', `/v1/runs/${runId}/findings`, resFindings.status, `items: ${findingsList.length}, next_cursor: ${dataFindings.next_cursor}`, tFindings);
 
-      consoleBadge.textContent = 'Pipeline Completed (200 OK)';
+      consoleBadge.textContent = 'Evaluation Complete (200 OK)';
       consoleBadge.className = 'console-badge badge-success';
 
-      // Store and render results
       state.expressResults = dataGetRun;
       renderExpressResults(dataGetRun, findingsList, assessmentId, runId);
-      showToast(`Assessment Completed: ${dataGetRun.summary.FAIL > 0 ? 'Violations Detected' : 'All Rules Passed'}`, dataGetRun.summary.FAIL > 0 ? 'error' : 'success');
+      showToast(`Evaluation Complete: ${dataGetRun.summary.FAIL > 0 ? 'Violations Detected' : 'All Rules Passed'}`, dataGetRun.summary.FAIL > 0 ? 'error' : 'success');
+
+      await loadAssessmentsList();
+      await loadTenantUsage();
 
     } catch (err) {
       consoleBadge.textContent = 'Pipeline Failed';
@@ -348,7 +401,7 @@ function setupExpressPipeline() {
     } finally {
       btnExpressRun.disabled = false;
       expressSpinner.classList.add('hidden');
-      btnExpressText.textContent = 'Execute Assessment Pipeline';
+      btnExpressText.textContent = 'Run Assurance Evaluation';
     }
   });
 }
@@ -361,7 +414,6 @@ function renderExpressResults(runData, findingsList, assessmentId, runId) {
   const summary = runData.summary || { PASS: 0, FAIL: 0, INCONCLUSIVE: 0 };
   const failCount = summary.FAIL || 0;
   const passCount = summary.PASS || 0;
-  const inconclCount = summary.INCONCLUSIVE || 0;
   const totalCount = (runData.results || []).length;
 
   const isViolation = failCount > 0;
@@ -377,7 +429,7 @@ function renderExpressResults(runData, findingsList, assessmentId, runId) {
     verdictIcon.innerHTML = '&#9888;';
     verdictEyebrow.textContent = 'ASSURANCE EVALUATION FAILED';
     verdictHeadline.textContent = `${failCount} Policy Violations Detected`;
-    verdictSubtext.textContent = 'The agent violated permission boundaries, executed forbidden tools, or bypassed approval checks.';
+    verdictSubtext.textContent = 'The agent violated permission boundaries, executed forbidden tools, or bypassed approval gates.';
   } else {
     verdictBanner.className = 'verdict-banner banner-pass';
     verdictIcon.innerHTML = '&#10003;';
@@ -468,16 +520,16 @@ function renderExpressRules(results) {
   }).join('');
 }
 
-// ─── TAB 1: POST /v1/assessments ──────────────────────────────────────
-function setupAssessmentEndpoint() {
-  const form = document.getElementById('form-create-assessment');
-  const btn = document.getElementById('btn-call-assessment');
+// ─── JOURNEY J1: CREATE ASSESSMENT ────────────────────────────────────
+function setupJourneyJ1() {
+  const form = document.getElementById('form-j1-assessment');
+  const btn = document.getElementById('btn-call-j1');
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const title = document.getElementById('assess-title').value.trim();
-    const scope = document.getElementById('assess-scope').value.trim();
-    const manifestRef = document.getElementById('assess-manifest-ref').value.trim();
+    const title = document.getElementById('j1-title').value.trim();
+    const manifestRef = document.getElementById('j1-manifest-ref').value.trim();
+    const scope = document.getElementById('j1-scope').value.trim();
 
     btn.disabled = true;
     const t0 = performance.now();
@@ -485,7 +537,7 @@ function setupAssessmentEndpoint() {
     try {
       const res = await fetch(`${API_BASE}/v1/assessments`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Correlation-ID': 'req-' + Date.now() },
+        headers: getAuthHeaders({ 'X-Correlation-ID': 'j1-' + Date.now() }),
         body: JSON.stringify({
           title: title,
           scope: scope,
@@ -496,10 +548,10 @@ function setupAssessmentEndpoint() {
       const data = await res.json();
 
       displayApiResponse(
-        'resp-assessment-wrap',
-        'resp-assessment-status',
-        'resp-assessment-time',
-        'resp-assessment-json',
+        'resp-j1-wrap',
+        'resp-j1-status',
+        'resp-j1-time',
+        'resp-j1-json',
         `${res.status} ${res.statusText}`,
         duration,
         data
@@ -507,10 +559,11 @@ function setupAssessmentEndpoint() {
 
       if (res.ok && data.assessment_id) {
         state.currentAssessmentId = data.assessment_id;
-        document.getElementById('run-assessment-id').value = data.assessment_id;
-        showToast(`Created Assessment: ${data.assessment_id.substring(0, 8)}...`, 'success');
+        document.getElementById('j4-assessment-id').value = data.assessment_id;
+        showToast(`Created Assessment: ${data.assessment_id.substring(0, 8)}... (Scope Hash: ${data.scope_hash})`, 'success');
+        await loadAssessmentsList();
       } else {
-        showToast(data.detail || 'Error creating assessment', 'error');
+        showToast(data.message || data.detail || 'Error creating assessment', 'error');
       }
     } catch (err) {
       showToast(err.message, 'error');
@@ -520,21 +573,213 @@ function setupAssessmentEndpoint() {
   });
 }
 
-// ─── TAB 2: POST /v1/assessments/{id}/runs ────────────────────────────
-function setupRunsEndpoint() {
-  const form = document.getElementById('form-start-run');
-  const btn = document.getElementById('btn-call-run');
+async function loadAssessmentsList() {
+  const container = document.getElementById('j1-assessments-list');
+  try {
+    const res = await fetch(`${API_BASE}/v1/assessments`, { headers: getAuthHeaders() });
+    if (!res.ok) return;
+    const items = await res.json();
+
+    if (items.length === 0) {
+      container.innerHTML = '<p class="text-sm text-muted">No assessment projects configured for this tenant yet.</p>';
+      return;
+    }
+
+    container.innerHTML = items.map(a => `
+      <div class="record-row" onclick="selectAssessment('${a.assessment_id}')">
+        <span class="record-title"><strong>${escapeHtml(a.title)}</strong></span>
+        <span class="record-id"><code>${a.assessment_id.substring(0, 8)}...</code></span>
+        <span class="record-hash">Scope Hash: <code>${a.scope_hash}</code></span>
+        <span class="status-badge ${a.status === 'completed' ? 'status-badge-pass' : 'status-badge-fail'}">${a.status}</span>
+      </div>
+    `).join('');
+  } catch (_) {}
+}
+
+window.selectAssessment = (id) => {
+  state.currentAssessmentId = id;
+  document.getElementById('j4-assessment-id').value = id;
+  showToast(`Selected Assessment: ${id.substring(0, 8)}...`, 'info');
+};
+
+// ─── JOURNEY J2: REGISTER AGENT ADAPTER ────────────────────────────────
+function setupJourneyJ2() {
+  const form = document.getElementById('form-j2-agent');
+  const btn = document.getElementById('btn-call-j2');
+  const typeSelect = document.getElementById('j2-type');
+  const endpointRow = document.getElementById('j2-endpoint-row');
+
+  typeSelect.addEventListener('change', () => {
+    if (typeSelect.value === 'synthetic') {
+      document.getElementById('j2-endpoint-url').value = '';
+      document.getElementById('j2-endpoint-url').placeholder = 'Bundled in-process mock adapter (no URL required)';
+    } else {
+      document.getElementById('j2-endpoint-url').placeholder = 'http://127.0.0.1:8000/v1/agent/run or https://agent.sandbox.local/run';
+    }
+  });
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const assessmentId = document.getElementById('run-assessment-id').value.trim();
-    const scenarioPack = document.getElementById('run-scenario-pack').value;
-    const adapter = document.getElementById('run-adapter').value.trim();
-    const budget = parseInt(document.getElementById('run-budget').value) || 5000;
-    const hardened = document.getElementById('run-hardened').checked;
+    const name = document.getElementById('j2-name').value.trim();
+    const adapterType = document.getElementById('j2-type').value;
+    const endpointUrl = document.getElementById('j2-endpoint-url').value.trim();
+    const hosts = document.getElementById('j2-hosts').value.split(',').map(h => h.trim()).filter(Boolean);
+    const timeout = parseFloat(document.getElementById('j2-timeout').value) || 15.0;
+    const authorised = document.getElementById('j2-auth-confirm').checked;
+
+    btn.disabled = true;
+    const t0 = performance.now();
+
+    try {
+      const res = await fetch(`${API_BASE}/v1/agents`, {
+        method: 'POST',
+        headers: getAuthHeaders({ 'X-Correlation-ID': 'j2-' + Date.now() }),
+        body: JSON.stringify({
+          name: name,
+          adapter_type: adapterType,
+          endpoint_url: endpointUrl || null,
+          allowed_hosts: hosts,
+          timeout_seconds: timeout,
+          authorised: authorised,
+          scope_description: 'Registered adapter for bounded assurance evaluation',
+        }),
+      });
+      const duration = Math.round(performance.now() - t0);
+      const data = await res.json();
+
+      displayApiResponse(
+        'resp-j2-wrap',
+        'resp-j2-status',
+        'resp-j2-time',
+        'resp-j2-json',
+        `${res.status} ${res.statusText}`,
+        duration,
+        data
+      );
+
+      if (res.ok && data.agent_id) {
+        state.currentAgentId = data.agent_id;
+        document.getElementById('j1-manifest-ref').value = data.agent_id;
+        showToast(`Registered Agent Adapter: ${data.name} (${data.agent_id.substring(0, 8)}...)`, 'success');
+        await loadAgentsList();
+      } else {
+        showToast(data.message || data.detail || 'Error registering agent', 'error');
+      }
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}
+
+async function loadAgentsList() {
+  const container = document.getElementById('j2-agents-list');
+  try {
+    const res = await fetch(`${API_BASE}/v1/agents`, { headers: getAuthHeaders() });
+    if (!res.ok) return;
+    const items = await res.json();
+
+    if (items.length === 0) {
+      container.innerHTML = '<p class="text-sm text-muted">No agent adapters registered for this tenant yet.</p>';
+      return;
+    }
+
+    container.innerHTML = items.map(a => `
+      <div class="record-row" onclick="selectAgent('${a.agent_id}', '${escapeHtml(a.endpoint_url || 'synthetic')}')">
+        <span class="record-title"><strong>${escapeHtml(a.name)}</strong> (${a.adapter_type})</span>
+        <span class="record-id"><code>${a.agent_id.substring(0, 8)}...</code></span>
+        <span class="record-hash">${a.endpoint_url || 'In-Process Synthetic'}</span>
+        <span class="status-badge status-badge-pass">${a.authorised ? 'Authorised' : 'Pending'}</span>
+      </div>
+    `).join('');
+  } catch (_) {}
+}
+
+window.selectAgent = (agentId, endpoint) => {
+  state.currentAgentId = agentId;
+  document.getElementById('j1-manifest-ref').value = agentId;
+  document.getElementById('j4-adapter').value = endpoint;
+  showToast(`Selected Agent: ${agentId.substring(0, 8)}...`, 'info');
+};
+
+// ─── JOURNEY J3: POLICY MANIFEST & SCENARIOS ──────────────────────────
+async function setupJourneyJ3() {
+  const packSelect = document.getElementById('j3-pack-select');
+  const manifestView = document.getElementById('j3-manifest-view');
+  const btnProceed = document.getElementById('btn-j3-proceed');
+  const scenariosGrid = document.getElementById('j3-scenarios-grid');
+
+  async function updateScenariosCatalog() {
+    try {
+      const res = await fetch(`${API_BASE}/v1/scenarios`);
+      if (!res.ok) return;
+      const allScenarios = await res.json();
+
+      let activeScenarios = allScenarios;
+      if (packSelect.value === 'core-v1') {
+        const coreIds = ['allowed_tool_smoke_v1', 'prompt_injection_boundary_v1', 'approval_gate_v1', 'retry_idempotency_v1'];
+        activeScenarios = allScenarios.filter(s => coreIds.includes(s.scenario_id));
+      }
+
+      manifestView.value = JSON.stringify({
+        schema_version: '2026-10-approval',
+        scenario_pack: packSelect.value,
+        deterministic_oracle: 'deterministic-v2',
+        framework_mappings: ['OWASP Agentic Top 10 2026', 'NIST AI 600-1 GenAI Profile'],
+        scenarios_count: activeScenarios.length,
+        scenarios: activeScenarios.map(s => ({
+          scenario_id: s.scenario_id,
+          category: s.category,
+          severity: s.severity,
+          prohibited_tools: s.prohibited_tools,
+        })),
+      }, null, 2);
+
+      scenariosGrid.innerHTML = activeScenarios.map(s => `
+        <div class="rule-card rule-card-pass">
+          <div class="rule-card-top">
+            <div class="rule-title-group">
+              <span class="severity-tag sev-${s.severity}">${s.severity.toUpperCase()}</span>
+              <h4>${escapeHtml(s.scenario_id)}</h4>
+            </div>
+          </div>
+          <p class="rule-summary-text">${escapeHtml(s.objective)}</p>
+          <div class="rule-card-footer">
+            <div class="rule-meta-tag">
+              <span>Category: <em>${escapeHtml(s.category)}</em></span>
+              <span class="sep">&bull;</span>
+              <span>Hash: <code>${(s.fixture_hash || 'fixture').substring(0, 8)}</code></span>
+            </div>
+          </div>
+        </div>
+      `).join('');
+    } catch (_) {}
+  }
+
+  packSelect.addEventListener('change', updateScenariosCatalog);
+  btnProceed.addEventListener('click', () => switchTab('tab-j4-evaluate'));
+
+  await updateScenariosCatalog();
+}
+
+// ─── JOURNEY J4: START RUN & EVALUATE ─────────────────────────────────
+function setupJourneyJ4() {
+  const form = document.getElementById('form-j4-run');
+  const btn = document.getElementById('btn-call-j4');
+  const runDetails = document.getElementById('j4-run-details');
+  const summaryPills = document.getElementById('j4-summary-pills');
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const assessmentId = document.getElementById('j4-assessment-id').value.trim();
+    const scenarioPack = document.getElementById('j4-scenario-pack').value;
+    const adapter = document.getElementById('j4-adapter').value.trim();
+    const budget = parseInt(document.getElementById('j4-budget').value) || 5000;
+    const hardened = document.getElementById('j4-hardened').checked;
 
     if (!assessmentId) {
-      showToast('Assessment ID is required.', 'error');
+      showToast('Assessment ID is required. Create one in J1.', 'error');
       return;
     }
 
@@ -544,11 +789,10 @@ function setupRunsEndpoint() {
     try {
       const res = await fetch(`${API_BASE}/v1/assessments/${assessmentId}/runs`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Idempotency-Key': 'run-' + Date.now(),
-          'X-Correlation-ID': 'corr-' + Date.now(),
-        },
+        headers: getAuthHeaders({
+          'Idempotency-Key': 'j4-run-' + Date.now(),
+          'X-Correlation-ID': 'j4-corr-' + Date.now(),
+        }),
         body: JSON.stringify({
           scenario_pack: scenarioPack,
           adapter: adapter,
@@ -560,10 +804,10 @@ function setupRunsEndpoint() {
       const data = await res.json();
 
       displayApiResponse(
-        'resp-run-wrap',
-        'resp-run-status',
-        'resp-run-time',
-        'resp-run-json',
+        'resp-j4-wrap',
+        'resp-j4-status',
+        'resp-j4-time',
+        'resp-j4-json',
         `${res.status} ${res.statusText}`,
         duration,
         data
@@ -574,16 +818,37 @@ function setupRunsEndpoint() {
           state.previousRunId = state.currentRunId;
         }
         state.currentRunId = data.run_id;
-        document.getElementById('get-run-id').value = data.run_id;
-        document.getElementById('findings-run-id').value = data.run_id;
-        document.getElementById('report-run-id').value = data.run_id;
-        document.getElementById('comp-current-id').value = data.run_id;
+        document.getElementById('j5-run-id').value = data.run_id;
+        document.getElementById('j6-run-id').value = data.run_id;
+        document.getElementById('j7-current-id').value = data.run_id;
         if (state.previousRunId) {
-          document.getElementById('comp-baseline-id').value = state.previousRunId;
+          document.getElementById('j7-baseline-id').value = state.previousRunId;
         }
-        showToast(`Run Dispatched: ${data.run_id.substring(0, 8)}...`, 'success');
+
+        runDetails.classList.remove('hidden');
+        document.getElementById('j4-run-status-text').textContent = data.status.toUpperCase();
+        document.getElementById('j4-progress-pct').textContent = '100%';
+
+        const summary = data.summary || {};
+        summaryPills.innerHTML = `
+          <div class="stat-pill-box pill-violations">
+            <span class="pill-number">${summary.FAIL || 0}</span>
+            <span class="pill-name">Failures</span>
+          </div>
+          <div class="stat-pill-box pill-passed">
+            <span class="pill-number">${summary.PASS || 0}</span>
+            <span class="pill-name">Passed</span>
+          </div>
+          <div class="stat-pill-box pill-rules">
+            <span class="pill-number">${(data.results || []).length}</span>
+            <span class="pill-name">Total</span>
+          </div>
+        `;
+
+        showToast(`Run Completed: ${summary.FAIL || 0} failures detected`, summary.FAIL > 0 ? 'error' : 'success');
+        await loadTenantUsage();
       } else {
-        showToast(data.detail || 'Error starting run', 'error');
+        showToast(data.message || data.detail || 'Error running evaluation', 'error');
       }
     } catch (err) {
       showToast(err.message, 'error');
@@ -593,99 +858,43 @@ function setupRunsEndpoint() {
   });
 }
 
-// ─── TAB 3: GET /v1/runs/{id} ─────────────────────────────────────────
-function setupRunStatusEndpoint() {
-  const form = document.getElementById('form-get-run');
-  const btn = document.getElementById('btn-call-get-run');
+// ─── JOURNEY J5: EVIDENCE REVIEW & TRIAGE ─────────────────────────────
+function setupJourneyJ5() {
+  const form = document.getElementById('form-j5-findings');
+  const btn = document.getElementById('btn-call-j5');
+  const container = document.getElementById('j5-findings-container');
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const runId = document.getElementById('get-run-id').value.trim();
+    const runId = document.getElementById('j5-run-id').value.trim();
     if (!runId) {
       showToast('Run ID is required.', 'error');
       return;
     }
 
     btn.disabled = true;
-    const t0 = performance.now();
 
     try {
-      const res = await fetch(`${API_BASE}/v1/runs/${runId}`);
-      const duration = Math.round(performance.now() - t0);
+      const res = await fetch(`${API_BASE}/v1/runs/${runId}/findings`, { headers: getAuthHeaders() });
       const data = await res.json();
-
-      displayApiResponse(
-        'resp-get-run-wrap',
-        'resp-get-run-status',
-        'resp-get-run-time',
-        'resp-get-run-json',
-        `${res.status} ${res.statusText}`,
-        duration,
-        data
-      );
-
-      if (res.ok) {
-        state.expressResults = data;
-        showToast(`Run Status: ${data.status} (Pass: ${data.summary?.PASS || 0}, Fail: ${data.summary?.FAIL || 0})`, 'info');
-      } else {
-        showToast(data.detail || 'Error fetching run', 'error');
-      }
-    } catch (err) {
-      showToast(err.message, 'error');
-    } finally {
-      btn.disabled = false;
-    }
-  });
-}
-
-// ─── TAB 4: GET /v1/runs/{id}/findings ────────────────────────────────
-function setupFindingsEndpoint() {
-  const form = document.getElementById('form-get-findings');
-  const btn = document.getElementById('btn-call-findings');
-  const cardsWrap = document.getElementById('findings-cards-wrap');
-
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const runId = document.getElementById('findings-run-id').value.trim();
-    if (!runId) {
-      showToast('Run ID is required.', 'error');
-      return;
-    }
-
-    btn.disabled = true;
-    const t0 = performance.now();
-
-    try {
-      const res = await fetch(`${API_BASE}/v1/runs/${runId}/findings`);
-      const duration = Math.round(performance.now() - t0);
-      const data = await res.json();
-
-      displayApiResponse(
-        'resp-findings-wrap',
-        'resp-findings-status',
-        'resp-findings-time',
-        'resp-findings-json',
-        `${res.status} ${res.statusText}`,
-        duration,
-        data
-      );
-
       const items = data.items || [];
       state.findings = items;
 
       if (items.length === 0) {
-        cardsWrap.innerHTML = '<div class="empty-filter-state"><p>No security findings generated for this run.</p></div>';
+        container.innerHTML = '<div class="empty-filter-state"><p>No security findings generated for this run.</p></div>';
       } else {
-        cardsWrap.innerHTML = items.map(f => `
+        container.innerHTML = items.map(f => `
           <div class="rule-card rule-card-fail">
             <div class="rule-card-top">
               <div class="rule-title-group">
                 <span class="severity-tag sev-${f.severity}">${f.severity.toUpperCase()}</span>
-                <span class="status-badge status-badge-fail">${f.status}</span>
+                <span class="status-badge ${f.status === 'false_positive' ? 'status-badge-pass' : 'status-badge-fail'}">
+                  ${f.status.toUpperCase()}
+                </span>
                 <h4>${escapeHtml(f.title || f.scenario_id)}</h4>
               </div>
               <button type="button" class="btn-inspect-trace" onclick="openReviewModal('${f.finding_id}')">
-                &#9998; Review Finding
+                &#9998; Mark False Positive / Review
               </button>
             </div>
             <p class="rule-summary-text">${escapeHtml(f.description)}</p>
@@ -693,14 +902,14 @@ function setupFindingsEndpoint() {
               <div class="rule-meta-tag">
                 <span>Category: <em>${escapeHtml(f.category)}</em></span>
                 <span class="sep">&bull;</span>
-                <span>Finding ID: <code>${f.finding_id.substring(0, 8)}...</code></span>
+                <span>ID: <code>${f.finding_id.substring(0, 8)}...</code></span>
               </div>
             </div>
           </div>
         `).join('');
       }
 
-      showToast(`Retrieved ${items.length} findings`, 'info');
+      showToast(`Retrieved ${items.length} findings for run ${runId.substring(0, 8)}...`, 'info');
     } catch (err) {
       showToast(err.message, 'error');
     } finally {
@@ -709,67 +918,16 @@ function setupFindingsEndpoint() {
   });
 }
 
-// ─── TAB 5: POST /v1/findings/{id}/reviews ────────────────────────────
-function setupReviewsEndpoint() {
-  const form = document.getElementById('form-review-finding');
-  const btn = document.getElementById('btn-call-review');
+// ─── JOURNEY J6: EXPORT ASSESSMENT REPORT ─────────────────────────────
+function setupJourneyJ6() {
+  const form = document.getElementById('form-j6-report');
+  const btn = document.getElementById('btn-call-j6');
+  const downloadLink = document.getElementById('btn-j6-download');
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const findingId = document.getElementById('review-finding-id').value.trim();
-    const decision = document.getElementById('review-decision').value;
-    const reason = document.getElementById('review-reason').value.trim();
-
-    if (!findingId || !reason) {
-      showToast('Finding ID and reason are mandatory.', 'error');
-      return;
-    }
-
-    btn.disabled = true;
-    const t0 = performance.now();
-
-    try {
-      const res = await fetch(`${API_BASE}/v1/findings/${findingId}/reviews`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision, reason }),
-      });
-      const duration = Math.round(performance.now() - t0);
-      const data = await res.json();
-
-      displayApiResponse(
-        'resp-review-wrap',
-        'resp-review-status',
-        'resp-review-time',
-        'resp-review-json',
-        `${res.status} ${res.statusText}`,
-        duration,
-        data
-      );
-
-      if (res.ok && data.review_id) {
-        showToast(`Review Recorded: ${data.review_id.substring(0, 8)}... (Decision: ${data.decision})`, 'success');
-      } else {
-        showToast(data.detail || 'Error submitting review', 'error');
-      }
-    } catch (err) {
-      showToast(err.message, 'error');
-    } finally {
-      btn.disabled = false;
-    }
-  });
-}
-
-// ─── TAB 6: POST /v1/runs/{id}/report ─────────────────────────────────
-function setupReportsEndpoint() {
-  const form = document.getElementById('form-create-report');
-  const btn = document.getElementById('btn-call-report');
-  const downloadLink = document.getElementById('btn-direct-download');
-
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const runId = document.getElementById('report-run-id').value.trim();
-    const format = document.getElementById('report-format').value;
+    const runId = document.getElementById('j6-run-id').value.trim();
+    const format = document.getElementById('j6-format').value;
 
     if (!runId) {
       showToast('Run ID is required.', 'error');
@@ -782,17 +940,17 @@ function setupReportsEndpoint() {
     try {
       const res = await fetch(`${API_BASE}/v1/runs/${runId}/report`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ format }),
       });
       const duration = Math.round(performance.now() - t0);
       const data = await res.json();
 
       displayApiResponse(
-        'resp-report-wrap',
-        'resp-report-status',
-        'resp-report-time',
-        'resp-report-json',
+        'resp-j6-wrap',
+        'resp-j6-status',
+        'resp-j6-time',
+        'resp-j6-json',
         `${res.status} ${res.statusText}`,
         duration,
         data
@@ -802,9 +960,9 @@ function setupReportsEndpoint() {
         const artifactId = data.artifact_id || data.artifact_job_id;
         state.currentReportId = artifactId;
         downloadLink.href = `${API_BASE}/v1/reports/${artifactId}/download`;
-        showToast(`Report Generated: ${artifactId.substring(0, 8)}...`, 'success');
+        showToast(`Official Assessment Artifact Generated: ${artifactId.substring(0, 8)}...`, 'success');
       } else {
-        showToast(data.detail || 'Error generating report', 'error');
+        showToast(data.message || data.detail || 'Error generating report', 'error');
       }
     } catch (err) {
       showToast(err.message, 'error');
@@ -814,16 +972,16 @@ function setupReportsEndpoint() {
   });
 }
 
-// ─── TAB 7: GET /v1/runs/{id}/compare/{other} ─────────────────────────
-function setupCompareEndpoint() {
-  const form = document.getElementById('form-compare-runs');
-  const btn = document.getElementById('btn-call-compare');
-  const deltasView = document.getElementById('compare-deltas-view');
+// ─── JOURNEY J7: REGRESSION DELTA COMPARISON ──────────────────────────
+function setupJourneyJ7() {
+  const form = document.getElementById('form-j7-compare');
+  const btn = document.getElementById('btn-call-j7');
+  const container = document.getElementById('j7-deltas-container');
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const currentId = document.getElementById('comp-current-id').value.trim();
-    const baselineId = document.getElementById('comp-baseline-id').value.trim();
+    const currentId = document.getElementById('j7-current-id').value.trim();
+    const baselineId = document.getElementById('j7-baseline-id').value.trim();
 
     if (!currentId || !baselineId) {
       showToast('Both Current Run ID and Baseline Run ID are required.', 'error');
@@ -834,15 +992,15 @@ function setupCompareEndpoint() {
     const t0 = performance.now();
 
     try {
-      const res = await fetch(`${API_BASE}/v1/runs/${currentId}/compare/${baselineId}`);
+      const res = await fetch(`${API_BASE}/v1/runs/${currentId}/compare/${baselineId}`, { headers: getAuthHeaders() });
       const duration = Math.round(performance.now() - t0);
       const data = await res.json();
 
       displayApiResponse(
-        'resp-compare-wrap',
-        'resp-compare-status',
-        'resp-compare-time',
-        'resp-compare-json',
+        'resp-j7-wrap',
+        'resp-j7-status',
+        'resp-j7-time',
+        'resp-j7-json',
         `${res.status} ${res.statusText}`,
         duration,
         data
@@ -850,9 +1008,9 @@ function setupCompareEndpoint() {
 
       const deltas = data.scenario_deltas || [];
       if (deltas.length === 0) {
-        deltasView.innerHTML = '<div class="empty-filter-state"><p>No scenario deltas found between runs.</p></div>';
+        container.innerHTML = '<div class="empty-filter-state"><p>No scenario deltas between these two runs.</p></div>';
       } else {
-        deltasView.innerHTML = `
+        container.innerHTML = `
           <div class="comparison-summary-bar" style="grid-column: 1 / -1; margin-bottom: 12px;">
             <span>Resolved Failures: <strong class="text-success">${data.resolved_failures}</strong></span>
             <span class="sep">&bull;</span>
@@ -865,21 +1023,21 @@ function setupCompareEndpoint() {
               <div class="rule-card-top">
                 <div class="rule-title-group">
                   <span class="status-badge ${d.changed ? 'status-badge-fail' : 'status-badge-pass'}">
-                    ${d.changed ? 'CHANGED' : 'STABLE'}
+                    ${d.changed ? 'DELTA DETECTED' : 'STABLE'}
                   </span>
                   <h4>${escapeHtml(d.scenario_id)}</h4>
                 </div>
               </div>
               <p class="rule-summary-text">
-                Baseline: <strong>${escapeHtml(d.baseline_verdict || 'N/A')}</strong> &rarr; 
-                Current: <strong>${escapeHtml(d.current_verdict || 'N/A')}</strong>
+                Baseline Verdict: <strong>${escapeHtml(d.baseline_verdict || 'N/A')}</strong> &rarr; 
+                Current Verdict: <strong>${escapeHtml(d.current_verdict || 'N/A')}</strong>
               </p>
             </div>
           `).join('')}
         `;
       }
 
-      showToast(`Comparison Complete: ${data.resolved_failures} resolved, ${data.new_failures} regressions`, 'info');
+      showToast(`Regression Compared: ${data.resolved_failures} resolved, ${data.new_failures} regressions`, 'info');
     } catch (err) {
       showToast(err.message, 'error');
     } finally {
@@ -888,7 +1046,7 @@ function setupCompareEndpoint() {
   });
 }
 
-// ─── Modals Setup ─────────────────────────────────────────────────────
+// ─── MODALS ───────────────────────────────────────────────────────────
 function setupModals() {
   const evModal = document.getElementById('evidence-modal');
   const evClose = document.getElementById('modal-close');
@@ -925,19 +1083,18 @@ function setupModals() {
     try {
       const res = await fetch(`${API_BASE}/v1/findings/${findingId}/reviews`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ decision, reason }),
       });
       const data = await res.json();
       if (res.ok) {
         showToast(`Review Saved for ${findingId.substring(0, 8)}... (${decision})`, 'success');
         revModal.classList.add('hidden');
-        // Refresh findings tab if open
         if (state.currentRunId) {
-          document.getElementById('btn-call-findings').click();
+          document.getElementById('btn-call-j5').click();
         }
       } else {
-        showToast(data.detail || 'Error saving review', 'error');
+        showToast(data.message || data.detail || 'Error saving review', 'error');
       }
     } catch (err) {
       showToast(err.message, 'error');
