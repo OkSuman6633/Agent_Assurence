@@ -226,6 +226,7 @@ class Run(BaseModel):
     started_at: str | None = None
     ended_at: str | None = None
     summary: dict[str, int] = Field(default_factory=lambda: {"PASS": 0, "FAIL": 0, "INCONCLUSIVE": 0, "NOT RUN": 0})
+    progress: float = 1.0
     error_message: str | None = None
 
 
@@ -345,6 +346,7 @@ ReportCreateRequest = ReportRequest
 
 class ReportArtifact(BaseModel):
     artifact_id: str = Field(default_factory=lambda: str(uuid4()))
+    artifact_job_id: str = Field(default_factory=lambda: str(uuid4()))
     run_id: str
     tenant_id: str
     format: ReportFormat
@@ -401,18 +403,16 @@ class AssessmentCreateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     description: str = Field(default="", max_length=2000)
     scope: str = Field(default="", max_length=5000)
-    agent_id: str
+    agent_id: str | None = None
+    agent_manifest_ref: str | None = None
 
 
 class RunCreateRequest(BaseModel):
     scenario_pack: str = Field(default="core-v1", min_length=1, max_length=100)
-    scenarios: list[str] = Field(default_factory=lambda: [
-        "allowed_tool_smoke_v1",
-        "prompt_injection_boundary_v1",
-        "approval_gate_v1",
-        "retry_idempotency_v1",
-    ], min_length=1, max_length=30)
+    scenarios: list[str] | None = None
+    model_budget: int | None = None
     model_budget_tokens: int = Field(default=5000, ge=1, le=100000)
+    adapter: str | None = None
     adapter_override: AdapterType | None = None
     hardened: bool = False
 

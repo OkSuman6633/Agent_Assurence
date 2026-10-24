@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Agent Assurance Laboratory — AI Agent Security & Policy Scanner</title>
-  <meta name="description" content="Simple, direct security and policy assurance scanner for AI agents. Enter any local or deployed URL to test against 12 deterministic safety rules.">
+  <title>Agent Assurance Laboratory — API Control Studio</title>
+  <meta name="description" content="AI Agent Security and Reliability Assessment Platform built strictly around the Section 7 API contract.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -12,7 +12,7 @@
 </head>
 <body>
   <div class="app-container">
-    <!-- Header -->
+    <!-- Top Header Navigation -->
     <header class="top-nav">
       <div class="nav-brand">
         <div class="brand-icon">
@@ -22,7 +22,7 @@
         </div>
         <div class="brand-text">
           <h1>Agent Assurance Laboratory</h1>
-          <span class="badge-tag">AI Agent Security & Policy Scanner</span>
+          <span class="badge-tag">Section 7 API Protocol Studio</span>
         </div>
       </div>
 
@@ -36,157 +36,466 @@
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
             <polyline points="14 2 14 8 20 8"></polyline>
           </svg>
-          API Docs
+          OpenAPI Spec
         </a>
       </div>
     </header>
 
-    <!-- Main Command Center Card -->
-    <main class="scanner-hero-card">
-      <div class="hero-header">
-        <h2>Evaluate AI Agent Security & Policy Boundaries</h2>
-        <p class="hero-desc">
-          Enter any agent endpoint URL (local or deployed) or test with the bundled synthetic agent.
-          The laboratory immediately probes the agent against 12 deterministic safety rules and returns whether it violates any policy.
-        </p>
-      </div>
+    <!-- Workflow Protocol Stepper / API Nav Tabs -->
+    <nav class="api-stepper-nav" id="api-stepper-nav">
+      <button type="button" class="stepper-tab active" data-tab="tab-express">
+        <span class="step-num">&#9889;</span>
+        <span class="step-name">Express Evaluation</span>
+      </button>
+      <button type="button" class="stepper-tab" data-tab="tab-assessments">
+        <span class="step-num">1</span>
+        <span class="step-name">POST /v1/assessments</span>
+      </button>
+      <button type="button" class="stepper-tab" data-tab="tab-runs">
+        <span class="step-num">2</span>
+        <span class="step-name">POST /v1/assessments/{id}/runs</span>
+      </button>
+      <button type="button" class="stepper-tab" data-tab="tab-run-status">
+        <span class="step-num">3</span>
+        <span class="step-name">GET /v1/runs/{id}</span>
+      </button>
+      <button type="button" class="stepper-tab" data-tab="tab-findings">
+        <span class="step-num">4</span>
+        <span class="step-name">GET /v1/runs/{id}/findings</span>
+      </button>
+      <button type="button" class="stepper-tab" data-tab="tab-reviews">
+        <span class="step-num">5</span>
+        <span class="step-name">POST /v1/findings/{id}/reviews</span>
+      </button>
+      <button type="button" class="stepper-tab" data-tab="tab-reports">
+        <span class="step-num">6</span>
+        <span class="step-name">POST /v1/runs/{id}/report</span>
+      </button>
+      <button type="button" class="stepper-tab" data-tab="tab-compare">
+        <span class="step-num">7</span>
+        <span class="step-name">GET /v1/runs/{id}/compare/{other}</span>
+      </button>
+    </nav>
 
-      <form id="scanner-form" class="scanner-form">
-        <!-- Target Input Bar -->
-        <div class="input-action-bar">
-          <div class="url-input-container">
-            <span class="input-icon">&#128279;</span>
-            <input 
-              type="text" 
-              id="agent-url-input" 
-              placeholder="Enter Agent URL (e.g. http://127.0.0.1:8000/v1/agent/run or leave empty for synthetic demo)"
-              autocomplete="off"
-            >
-            <button type="button" class="btn-clear-input" id="btn-clear-url" title="Clear input">&times;</button>
+    <!-- TAB 0: EXPRESS EVALUATION (All 7 Endpoints Chained in One Click) -->
+    <section id="tab-express" class="tab-panel active">
+      <div class="panel-hero-card">
+        <div class="hero-header">
+          <h2>Instant AI Agent Security & Policy Evaluation</h2>
+          <p class="hero-desc">
+            Provide any agent URL (local loopback or deployed) or evaluate the bundled synthetic agent.
+            This workflow executes the full Section 7 API pipeline: creating the assessment scope, dispatching the run, fetching telemetry traces, collecting findings, and generating verifiable reports.
+          </p>
+        </div>
+
+        <form id="express-form" class="scanner-form">
+          <!-- Target URL Input -->
+          <div class="input-action-bar">
+            <div class="url-input-container">
+              <span class="input-icon">&#128279;</span>
+              <input 
+                type="text" 
+                id="express-url-input" 
+                placeholder="Enter Agent URL (e.g. http://127.0.0.1:8000/v1/agent/run or leave empty for synthetic demo)"
+                autocomplete="off"
+              >
+              <button type="button" class="btn-clear-input" id="btn-express-clear" title="Clear input">&times;</button>
+            </div>
+
+            <button type="submit" class="btn-primary btn-scan" id="btn-express-run">
+              <span class="btn-scan-icon">&#9654;</span>
+              <span id="btn-express-text">Execute Assessment Pipeline</span>
+              <span class="btn-spinner hidden" id="express-spinner"></span>
+            </button>
           </div>
 
-          <button type="submit" class="btn-primary btn-scan" id="btn-run-scan">
-            <span class="btn-scan-icon">&#9654;</span>
-            <span id="btn-scan-text">Run Assurance Evaluation</span>
-            <span class="btn-spinner hidden" id="scan-spinner"></span>
-          </button>
-        </div>
-
-        <!-- Quick Target Presets -->
-        <div class="presets-row">
-          <span class="presets-label">Quick Presets:</span>
-          <button type="button" class="preset-chip" id="preset-synth-vuln">
-            <span>&#9889; Synthetic Agent (Vulnerable Demo)</span>
-          </button>
-          <button type="button" class="preset-chip" id="preset-synth-hard">
-            <span>&#128737; Synthetic Agent (Hardened / Safe)</span>
-          </button>
-          <button type="button" class="preset-chip" id="preset-local-agent">
-            <span>&#128187; Local Agent (Port 8000)</span>
-          </button>
-        </div>
-
-        <!-- Scan Options (Clean Inline Toggle) -->
-        <div class="scan-options-row">
-          <div class="option-group">
-            <span class="option-label">Evaluation Scope:</span>
-            <label class="radio-pill">
-              <input type="radio" name="scan_scope" value="all" checked>
-              <span>Full 12 Rules (OWASP Agentic & NIST GenAI)</span>
-            </label>
-            <label class="radio-pill">
-              <input type="radio" name="scan_scope" value="core">
-              <span>Core Smoke (4 Rules)</span>
-            </label>
+          <!-- Quick Presets -->
+          <div class="presets-row">
+            <span class="presets-label">Quick Presets:</span>
+            <button type="button" class="preset-chip" id="preset-express-synth-vuln">
+              <span>&#9889; Synthetic Agent (Vulnerable Demo)</span>
+            </button>
+            <button type="button" class="preset-chip" id="preset-express-synth-hard">
+              <span>&#128737; Synthetic Agent (Hardened / Safe)</span>
+            </button>
+            <button type="button" class="preset-chip" id="preset-express-local">
+              <span>&#128187; Local Agent (Port 8000)</span>
+            </button>
           </div>
 
-          <div class="option-group token-budget-group">
-            <label for="token-budget-input" class="option-label">Token Budget:</label>
-            <input type="number" id="token-budget-input" value="5000" min="500" max="100000" step="500">
+          <!-- Execution Configuration -->
+          <div class="scan-options-row">
+            <div class="option-group">
+              <span class="option-label">Scenario Pack:</span>
+              <label class="radio-pill">
+                <input type="radio" name="express_pack" value="all-12" checked>
+                <span>Full 12 Rules (OWASP Agentic & NIST AI RMF)</span>
+              </label>
+              <label class="radio-pill">
+                <input type="radio" name="express_pack" value="core-v1">
+                <span>Core Smoke (4 Rules)</span>
+              </label>
+            </div>
+
+            <div class="option-group token-budget-group">
+              <label for="express-budget-input" class="option-label">Token Budget:</label>
+              <input type="number" id="express-budget-input" value="5000" min="500" max="100000" step="500">
+            </div>
           </div>
-        </div>
-      </form>
-    </main>
-
-    <!-- Scanning Progress Indicator (Hidden by default) -->
-    <div id="scanning-indicator" class="scanning-indicator hidden">
-      <div class="scanning-spinner"></div>
-      <div class="scanning-text-wrap">
-        <h3>Evaluating Target Agent Against Safety Policies...</h3>
-        <p id="scanning-status-text">Probing instruction boundaries, permission gates, data exfiltration, and tool telemetry...</p>
-      </div>
-    </div>
-
-    <!-- Results Section (Visible once scan completes) -->
-    <section id="results-section" class="results-section hidden">
-      
-      <!-- Verdict Hero Banner -->
-      <div id="verdict-banner" class="verdict-banner banner-fail">
-        <div class="verdict-icon-col">
-          <span class="verdict-big-icon" id="verdict-big-icon">&#9888;</span>
-        </div>
-        <div class="verdict-text-col">
-          <div class="verdict-eyebrow" id="verdict-eyebrow">ASSURANCE EVALUATION COMPLETED</div>
-          <h2 id="verdict-headline">6 Policy Violations Detected</h2>
-          <p id="verdict-subtext">The agent executed prohibited tools, bypassed approval constraints, or exfiltrated canary data.</p>
-        </div>
-        <div class="verdict-stats-col" id="verdict-stats-pills">
-          <!-- Filled dynamically -->
-        </div>
+        </form>
       </div>
 
-      <!-- Action Bar: Download Reports & Compare -->
-      <div class="results-actions-bar">
-        <div class="target-meta-info" id="target-meta-info">
-          <span>Target: <strong id="res-target-display">Synthetic Demo Agent</strong></span>
-          <span class="sep">&bull;</span>
-          <span>Run ID: <code id="res-run-id">run-1234</code></span>
+      <!-- Live API Call Execution Console -->
+      <div id="express-api-console" class="api-console-box hidden">
+        <div class="console-header">
+          <span class="console-title">&#128421; Section 7 API Execution Log</span>
+          <span class="console-badge" id="console-status-badge">Executing Pipeline...</span>
         </div>
-
-        <div class="report-buttons">
-          <a href="#" id="btn-download-json" class="btn-secondary" target="_blank">
-            <span>&#128229; Download JSON Report</span>
-          </a>
-          <a href="#" id="btn-download-text" class="btn-secondary" target="_blank">
-            <span>&#128196; Download Printable Report</span>
-          </a>
-          <button type="button" class="btn-secondary" id="btn-toggle-compare">
-            <span>&#128260; Compare Runs</span>
-          </button>
-        </div>
+        <div class="console-logs" id="console-logs"></div>
       </div>
 
-      <!-- Compare Runs Drawer (Hidden by default) -->
-      <div id="compare-drawer" class="compare-drawer hidden">
-        <div class="compare-drawer-header">
-          <h3>Compare with Previous Run (Regression Delta)</h3>
-          <p class="text-sm text-muted">Identify which policy violations were resolved or newly introduced.</p>
+      <!-- Express Results Section -->
+      <div id="express-results" class="results-section hidden">
+        <!-- Verdict Banner -->
+        <div id="express-verdict-banner" class="verdict-banner banner-fail">
+          <div class="verdict-icon-col">
+            <span class="verdict-big-icon" id="express-verdict-icon">&#9888;</span>
+          </div>
+          <div class="verdict-text-col">
+            <div class="verdict-eyebrow" id="express-verdict-eyebrow">EVALUATION COMPLETED</div>
+            <h2 id="express-verdict-headline">Policy Violations Detected</h2>
+            <p id="express-verdict-subtext">The agent attempted unauthorized tool executions or failed deterministic safety assertions.</p>
+          </div>
+          <div class="verdict-stats-col" id="express-stats-pills"></div>
         </div>
-        <div class="compare-inputs-row">
-          <select id="compare-select-baseline" class="form-select"></select>
-          <button type="button" class="btn-primary" id="btn-run-comparison">Compare Now</button>
-        </div>
-        <div id="compare-deltas-container" class="compare-deltas-list"></div>
-      </div>
 
-      <!-- Rule-by-Rule Breakdown List -->
-      <div class="rules-list-container">
-        <div class="rules-header">
-          <h3>Detailed Policy & Rule Outcomes</h3>
-          <div class="rules-filter-pills">
-            <button type="button" class="filter-pill active" data-filter="all">All Rules (<span id="count-all">12</span>)</button>
-            <button type="button" class="filter-pill" data-filter="fail">Violations (<span id="count-violations">6</span>)</button>
-            <button type="button" class="filter-pill" data-filter="pass">Passed (<span id="count-passed">6</span>)</button>
+        <!-- Action Bar -->
+        <div class="results-actions-bar">
+          <div class="target-meta-info">
+            <span>Assessment ID: <code id="express-meta-assessment">-</code></span>
+            <span class="sep">&bull;</span>
+            <span>Run ID: <code id="express-meta-run">-</code></span>
+          </div>
+
+          <div class="report-buttons">
+            <button type="button" class="btn-secondary" id="btn-express-gen-report">
+              <span>&#128229; Generate & Download Report</span>
+            </button>
+            <button type="button" class="btn-secondary" id="btn-express-jump-findings">
+              <span>&#128737; Review Findings (<span id="express-findings-count">0</span>)</span>
+            </button>
+            <button type="button" class="btn-secondary" id="btn-express-jump-compare">
+              <span>&#128260; Compare Runs</span>
+            </button>
           </div>
         </div>
 
-        <div id="rules-cards-container" class="rules-cards-grid">
-          <!-- Rendered dynamically -->
+        <!-- Rule Breakdown Grid -->
+        <div class="rules-list-container">
+          <div class="rules-header">
+            <h3>Detailed Policy & Assertion Outcomes</h3>
+            <div class="rules-filter-pills">
+              <button type="button" class="filter-pill active" data-express-filter="all">All (<span id="exp-count-all">0</span>)</button>
+              <button type="button" class="filter-pill" data-express-filter="fail">Violations (<span id="exp-count-fail">0</span>)</button>
+              <button type="button" class="filter-pill" data-express-filter="pass">Passed (<span id="exp-count-pass">0</span>)</button>
+            </div>
+          </div>
+          <div id="express-rules-container" class="rules-cards-grid"></div>
         </div>
       </div>
     </section>
 
-    <!-- Evidence & Trace Modal -->
+    <!-- TAB 1: POST /v1/assessments -->
+    <section id="tab-assessments" class="tab-panel">
+      <div class="endpoint-card">
+        <div class="endpoint-badge-bar">
+          <span class="http-verb post">POST</span>
+          <code class="endpoint-uri">/v1/assessments</code>
+          <span class="endpoint-desc">Create tenant-scoped assessment project with scope hash (Doc 1 §3, §7)</span>
+        </div>
+
+        <form id="form-create-assessment" class="endpoint-form">
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label for="assess-title">Title <span class="required">*</span></label>
+              <input type="text" id="assess-title" value="Q4 Production Agent Readiness" required>
+            </div>
+            <div class="form-group flex-1">
+              <label for="assess-manifest-ref">Agent Manifest Ref / Adapter <span class="required">*</span></label>
+              <input type="text" id="assess-manifest-ref" value="Synthetic Demo Agent" placeholder="Agent ID, Name, or URL" required>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="assess-scope">Scope Description <span class="required">*</span></label>
+            <textarea id="assess-scope" rows="2" required>Evaluation of tool permissions, instruction boundaries, and approval enforcement.</textarea>
+          </div>
+          <button type="submit" class="btn-primary" id="btn-call-assessment">
+            <span>Send POST /v1/assessments</span>
+          </button>
+        </form>
+
+        <div class="api-response-viewer hidden" id="resp-assessment-wrap">
+          <div class="resp-header">
+            <span class="resp-status" id="resp-assessment-status">201 Created</span>
+            <span class="resp-time" id="resp-assessment-time">0 ms</span>
+          </div>
+          <pre class="json-code-block"><code id="resp-assessment-json"></code></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: POST /v1/assessments/{id}/runs -->
+    <section id="tab-runs" class="tab-panel">
+      <div class="endpoint-card">
+        <div class="endpoint-badge-bar">
+          <span class="http-verb post">POST</span>
+          <code class="endpoint-uri">/v1/assessments/{id}/runs</code>
+          <span class="endpoint-desc">Start an assessment run with idempotent execution and deterministic oracles (Doc 1 §7)</span>
+        </div>
+
+        <form id="form-start-run" class="endpoint-form">
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label for="run-assessment-id">Assessment ID ({id}) <span class="required">*</span></label>
+              <input type="text" id="run-assessment-id" placeholder="Enter Assessment ID or create one in Step 1" required>
+            </div>
+            <div class="form-group flex-1">
+              <label for="run-scenario-pack">Scenario Pack <span class="required">*</span></label>
+              <select id="run-scenario-pack" class="form-select">
+                <option value="all-12">all-12 (Full 12 OWASP/NIST Rules)</option>
+                <option value="core-v1">core-v1 (4 Core Smoke Rules)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label for="run-adapter">Adapter / Target URL</label>
+              <input type="text" id="run-adapter" value="synthetic" placeholder="synthetic or http://127.0.0.1:8000/v1/agent/run">
+            </div>
+            <div class="form-group flex-1">
+              <label for="run-budget">Model Budget (Tokens)</label>
+              <input type="number" id="run-budget" value="5000" min="500" max="100000">
+            </div>
+          </div>
+
+          <div class="form-row">
+            <label class="checkbox-label">
+              <input type="checkbox" id="run-hardened">
+              <span>Simulate Hardened Safe Agent (Should Pass All Scenarios)</span>
+            </label>
+          </div>
+
+          <button type="submit" class="btn-primary" id="btn-call-run">
+            <span>Send POST /v1/assessments/{id}/runs</span>
+          </button>
+        </form>
+
+        <div class="api-response-viewer hidden" id="resp-run-wrap">
+          <div class="resp-header">
+            <span class="resp-status" id="resp-run-status">202 Accepted</span>
+            <span class="resp-time" id="resp-run-time">0 ms</span>
+          </div>
+          <pre class="json-code-block"><code id="resp-run-json"></code></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: GET /v1/runs/{id} -->
+    <section id="tab-run-status" class="tab-panel">
+      <div class="endpoint-card">
+        <div class="endpoint-badge-bar">
+          <span class="http-verb get">GET</span>
+          <code class="endpoint-uri">/v1/runs/{id}</code>
+          <span class="endpoint-desc">Fetch status, progress, summary verdicts, and evidence traces for a run (Doc 1 §7)</span>
+        </div>
+
+        <form id="form-get-run" class="endpoint-form">
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label for="get-run-id">Run ID ({id}) <span class="required">*</span></label>
+              <input type="text" id="get-run-id" placeholder="Enter Run ID" required>
+            </div>
+            <button type="submit" class="btn-primary" id="btn-call-get-run" style="align-self: flex-end;">
+              <span>Send GET /v1/runs/{id}</span>
+            </button>
+          </div>
+        </form>
+
+        <div class="api-response-viewer hidden" id="resp-get-run-wrap">
+          <div class="resp-header">
+            <span class="resp-status" id="resp-get-run-status">200 OK</span>
+            <span class="resp-time" id="resp-get-run-time">0 ms</span>
+          </div>
+          <pre class="json-code-block"><code id="resp-get-run-json"></code></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: GET /v1/runs/{id}/findings -->
+    <section id="tab-findings" class="tab-panel">
+      <div class="endpoint-card">
+        <div class="endpoint-badge-bar">
+          <span class="http-verb get">GET</span>
+          <code class="endpoint-uri">/v1/runs/{id}/findings</code>
+          <span class="endpoint-desc">Retrieve security & policy findings with pagination support (Doc 1 §7: {items, next_cursor})</span>
+        </div>
+
+        <form id="form-get-findings" class="endpoint-form">
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label for="findings-run-id">Run ID ({id}) <span class="required">*</span></label>
+              <input type="text" id="findings-run-id" placeholder="Enter Run ID" required>
+            </div>
+            <button type="submit" class="btn-primary" id="btn-call-findings" style="align-self: flex-end;">
+              <span>Send GET /v1/runs/{id}/findings</span>
+            </button>
+          </div>
+        </form>
+
+        <div class="api-response-viewer hidden" id="resp-findings-wrap">
+          <div class="resp-header">
+            <span class="resp-status" id="resp-findings-status">200 OK</span>
+            <span class="resp-time" id="resp-findings-time">0 ms</span>
+          </div>
+          <pre class="json-code-block"><code id="resp-findings-json"></code></pre>
+        </div>
+
+        <!-- Rendered Findings Cards -->
+        <div id="findings-cards-wrap" class="rules-cards-grid" style="margin-top: 20px;"></div>
+      </div>
+    </section>
+
+    <!-- TAB 5: POST /v1/findings/{id}/reviews -->
+    <section id="tab-reviews" class="tab-panel">
+      <div class="endpoint-card">
+        <div class="endpoint-badge-bar">
+          <span class="http-verb post">POST</span>
+          <code class="endpoint-uri">/v1/findings/{id}/reviews</code>
+          <span class="endpoint-desc">Submit reviewer disposition with mandatory justification reason (Doc 1 §7, Doc 4 UAT-08)</span>
+        </div>
+
+        <form id="form-review-finding" class="endpoint-form">
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label for="review-finding-id">Finding ID ({id}) <span class="required">*</span></label>
+              <input type="text" id="review-finding-id" placeholder="Select or enter Finding ID" required>
+            </div>
+            <div class="form-group flex-1">
+              <label for="review-decision">Decision <span class="required">*</span></label>
+              <select id="review-decision" class="form-select" required>
+                <option value="false_positive">false_positive (Harmless fixture / Expected behavior)</option>
+                <option value="mitigated">mitigated (Remediation deployed & verified)</option>
+                <option value="accepted_risk">accepted_risk (Business approved risk exception)</option>
+                <option value="confirmed">confirmed (Confirmed security flaw)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="review-reason">Reviewer Justification / Reason <span class="required">*</span></label>
+            <textarea id="review-reason" rows="2" placeholder="Mandatory rationale for auditor review trail" required>Synthetic test fixture verified non-exploitable in target environment.</textarea>
+          </div>
+
+          <button type="submit" class="btn-primary" id="btn-call-review">
+            <span>Send POST /v1/findings/{id}/reviews</span>
+          </button>
+        </form>
+
+        <div class="api-response-viewer hidden" id="resp-review-wrap">
+          <div class="resp-header">
+            <span class="resp-status" id="resp-review-status">200 OK</span>
+            <span class="resp-time" id="resp-review-time">0 ms</span>
+          </div>
+          <pre class="json-code-block"><code id="resp-review-json"></code></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 6: POST /v1/runs/{id}/report -->
+    <section id="tab-reports" class="tab-panel">
+      <div class="endpoint-card">
+        <div class="endpoint-badge-bar">
+          <span class="http-verb post">POST</span>
+          <code class="endpoint-uri">/v1/runs/{id}/report</code>
+          <span class="endpoint-desc">Generate immutable assessment report artifact in JSON or PDF/Text format (Doc 1 §7)</span>
+        </div>
+
+        <form id="form-create-report" class="endpoint-form">
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label for="report-run-id">Run ID ({id}) <span class="required">*</span></label>
+              <input type="text" id="report-run-id" placeholder="Enter Run ID" required>
+            </div>
+            <div class="form-group flex-1">
+              <label for="report-format">Report Format <span class="required">*</span></label>
+              <select id="report-format" class="form-select" required>
+                <option value="json">json (Machine-readable verifiable schema)</option>
+                <option value="pdf">pdf (Printable assessment report)</option>
+              </select>
+            </div>
+          </div>
+
+          <button type="submit" class="btn-primary" id="btn-call-report">
+            <span>Send POST /v1/runs/{id}/report</span>
+          </button>
+        </form>
+
+        <div class="api-response-viewer hidden" id="resp-report-wrap">
+          <div class="resp-header">
+            <span class="resp-status" id="resp-report-status">202 Accepted</span>
+            <span class="resp-time" id="resp-report-time">0 ms</span>
+          </div>
+          <pre class="json-code-block"><code id="resp-report-json"></code></pre>
+          <div style="margin-top: 12px;">
+            <a href="#" id="btn-direct-download" class="btn-secondary" target="_blank">
+              <span>&#128229; Download Generated Report Artifact</span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 7: GET /v1/runs/{id}/compare/{other} -->
+    <section id="tab-compare" class="tab-panel">
+      <div class="endpoint-card">
+        <div class="endpoint-badge-bar">
+          <span class="http-verb get">GET</span>
+          <code class="endpoint-uri">/v1/runs/{id}/compare/{other}</code>
+          <span class="endpoint-desc">Compare current run against baseline run to detect scenario deltas & regressions (Doc 1 §7)</span>
+        </div>
+
+        <form id="form-compare-runs" class="endpoint-form">
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label for="comp-current-id">Current Run ID ({id}) <span class="required">*</span></label>
+              <input type="text" id="comp-current-id" placeholder="Current Run ID" required>
+            </div>
+            <div class="form-group flex-1">
+              <label for="comp-baseline-id">Baseline Run ID ({other}) <span class="required">*</span></label>
+              <input type="text" id="comp-baseline-id" placeholder="Baseline Run ID" required>
+            </div>
+          </div>
+
+          <button type="submit" class="btn-primary" id="btn-call-compare">
+            <span>Send GET /v1/runs/{id}/compare/{other}</span>
+          </button>
+        </form>
+
+        <div class="api-response-viewer hidden" id="resp-compare-wrap">
+          <div class="resp-header">
+            <span class="resp-status" id="resp-compare-status">200 OK</span>
+            <span class="resp-time" id="resp-compare-time">0 ms</span>
+          </div>
+          <pre class="json-code-block"><code id="resp-compare-json"></code></pre>
+        </div>
+
+        <!-- Rendered Deltas View -->
+        <div id="compare-deltas-view" class="rules-cards-grid" style="margin-top: 20px;"></div>
+      </div>
+    </section>
+
+    <!-- Evidence Modal -->
     <div id="evidence-modal" class="modal-backdrop hidden">
       <div class="modal-dialog modal-wide">
         <div class="modal-header">
@@ -201,6 +510,37 @@
             Deterministic oracle evaluation is governed strictly by observable tool calls and state transitions:
           </p>
           <pre class="json-code-block"><code id="modal-json"></code></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Review Modal (Triggerable from Findings) -->
+    <div id="review-modal" class="modal-backdrop hidden">
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <div>
+            <h3>Review Finding</h3>
+            <span class="modal-scenario-tag" id="rev-modal-fid"></span>
+          </div>
+          <button type="button" class="modal-close" id="rev-modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <form id="modal-review-form" class="endpoint-form">
+            <div class="form-group">
+              <label for="modal-rev-decision">Decision</label>
+              <select id="modal-rev-decision" class="form-select">
+                <option value="false_positive">false_positive</option>
+                <option value="mitigated">mitigated</option>
+                <option value="accepted_risk">accepted_risk</option>
+                <option value="confirmed">confirmed</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="modal-rev-reason">Mandatory Rationale</label>
+              <textarea id="modal-rev-reason" rows="3" required>Assessor reviewed trace and verified finding.</textarea>
+            </div>
+            <button type="submit" class="btn-primary" id="btn-submit-modal-rev">Submit Review</button>
+          </form>
         </div>
       </div>
     </div>

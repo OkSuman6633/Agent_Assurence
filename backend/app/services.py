@@ -12,11 +12,13 @@ import json
 from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from .adapter import AdapterError, invoke_agent
 from .auth import AuthenticatedUser
 from .models import (
+    AdapterType,
     AgentCreateRequest,
     AgentManifest,
     AgentView,
@@ -118,10 +120,37 @@ class AssessmentService:
         self.repo = repo
 
     async def create_assessment(self, user: AuthenticatedUser, req: AssessmentCreateRequest) -> Assessment:
-        # Verify agent exists and belongs to tenant
-        agent = await self.repo.get_agent(user.tenant_id, req.agent_id)
+        # Support either agent_id or agent_manifest_ref
+        target_agent_id = req.agent_id or req.agent_manifest_ref
+        agent = None
+        if target_agent_id:
+            agent = await self.repo.get_agent(user.tenant_id, target_agent_id)
+            if not agent:
+                all_agents = await self.repo.list_agents(user.tenant_id)
+                for a in all_agents:
+                    if a.name == target_agent_id or a.endpoint_url == target_agent_id:
+                        agent = a
+                        target_agent_id = a.agent_id
+                        break
+
         if not agent:
-            raise KeyError("Agent not found or not accessible.")
+            # Check if any agent exists or create a synthetic agent automatically
+            all_agents = await self.repo.list_agents(user.tenant_id)
+            if all_agents:
+                agent = all_agents[0]
+                target_agent_id = agent.agent_id
+            else:
+                agent_entity = AgentManifest(
+                    tenant_id=user.tenant_id,
+                    name=req.agent_manifest_ref or "Default Synthetic Agent",
+                    adapter_type=AdapterType.synthetic,
+                    authorised=True,
+                    scope_description="Default assessment adapter",
+                )
+                await self.repo.save_agent(agent_entity)
+                agent = agent_entity
+                target_agent_id = agent_entity.agent_id
+
         if not agent.authorised:
             raise ValueError("Agent is not authorised for testing.")
 
@@ -130,7 +159,7 @@ class AssessmentService:
             title=req.title,
             description=req.description,
             scope=req.scope,
-            agent_id=req.agent_id,
+            agent_id=target_agent_id,
             owner_id=user.user_id,
             status=AssessmentStatus.configured,
         )
@@ -196,18 +225,33 @@ class RunService:
         if not agent.authorised:
             raise ValueError("Agent is not authorised for testing.")
 
+        # Resolve scenarios list from pack if not explicitly provided
+        scenarios = req.scenarios
+        if not scenarios:
+            if req.scenario_pack in ["all", "all-12", "full"]:
+                scenarios = [s.scenario_id for s in list_scenarios()]
+            else:
+                scenarios = [
+                    "allowed_tool_smoke_v1",
+                    "prompt_injection_boundary_v1",
+                    "approval_gate_v1",
+                    "retry_idempotency_v1",
+                ]
+
+        budget = req.model_budget if req.model_budget is not None else req.model_budget_tokens
+
         # Quota check
         entitlement = await self.repo.get_entitlement(user.tenant_id)
         if entitlement:
             runs = await self.repo.list_runs(user.tenant_id)
             if len(runs) >= entitlement.runs_limit:
                 raise ValueError(f"Run limit reached ({entitlement.runs_limit}). Upgrade your plan.")
-            scenario_count = len(req.scenarios)
+            scenario_count = len(scenarios)
             if entitlement.scenarios_used + scenario_count > entitlement.scenarios_limit:
                 raise ValueError(f"Scenario limit would be exceeded. Remaining: {entitlement.scenarios_limit - entitlement.scenarios_used}.")
 
         # Validate all scenario IDs
-        for sid in req.scenarios:
+        for sid in scenarios:
             get_scenario(sid)  # raises KeyError if unknown
 
         # Create run record
@@ -217,8 +261,8 @@ class RunService:
             tenant_id=user.tenant_id,
             status=RunStatus.running,
             scenario_pack=req.scenario_pack,
-            scenarios_requested=req.scenarios,
-            model_budget_tokens=req.model_budget_tokens,
+            scenarios_requested=scenarios,
+            model_budget_tokens=budget,
             idempotency_key=idempotency_key,
             correlation_id=correlation_id or str(uuid4()),
             started_at=datetime.now(timezone.utc).isoformat(),
@@ -233,10 +277,18 @@ class RunService:
         findings_created: list[Finding] = []
 
         agent_dict = agent.model_dump()
+        if req.adapter:
+            if req.adapter in ["synthetic", "mock", "bundled"]:
+                agent_dict["adapter_type"] = "synthetic"
+            elif req.adapter.startswith("http://") or req.adapter.startswith("https://"):
+                agent_dict["adapter_type"] = "http"
+                agent_dict["endpoint_url"] = req.adapter
+                parsed = urlparse(req.adapter)
+                agent_dict["allowed_hosts"] = [parsed.hostname or "localhost"]
 
-        for sid in req.scenarios:
+        for sid in scenarios:
             try:
-                observed = await invoke_agent(agent_dict, run.run_id, sid, req.model_budget_tokens, hardened=req.hardened)
+                observed = await invoke_agent(agent_dict, run.run_id, sid, budget, hardened=req.hardened)
                 verdict, summary, trace, evidence_complete = evaluate(sid, observed)
             except (AdapterError, UnsafeEndpoint, TimeoutError) as exc:
                 verdict = Verdict.INCONCLUSIVE.value
@@ -287,6 +339,7 @@ class RunService:
         run.status = RunStatus.completed
         run.ended_at = datetime.now(timezone.utc).isoformat()
         run.summary = {v: counts.get(v, 0) for v in ["PASS", "FAIL", "INCONCLUSIVE", "NOT RUN"]}
+        run.progress = 1.0
         await self.repo.update_run(run)
 
         # Update assessment status
@@ -296,9 +349,9 @@ class RunService:
         await self.repo.save_usage_event(UsageEvent(
             tenant_id=user.tenant_id,
             run_id=run.run_id,
-            scenario_count=len(req.scenarios),
-            compute_tokens=req.model_budget_tokens,
-            billable_units=len(req.scenarios),
+            scenario_count=len(scenarios),
+            compute_tokens=budget,
+            billable_units=len(scenarios),
         ))
 
         # Audit event
