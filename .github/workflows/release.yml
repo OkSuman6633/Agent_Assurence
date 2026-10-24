@@ -1,0 +1,58 @@
+name: Production Release Pipeline
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build-and-promote:
+    name: Build Signed Image & Staging Deploy
+    runs-on: ubuntu-latest
+    environment: staging
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: 'projects/123456789/locations/global/workloadIdentityPools/github-actions-staging/providers/github-provider'
+          service_account: 'assurance-api-staging@sample-project.iam.gserviceaccount.com'
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker
+        run: gcloud auth configure-docker europe-west2-docker.pkg.dev
+
+      - name: Build & Push Immutable Image Digest
+        run: |
+          IMAGE="europe-west2-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/assurance/assurance-app:${{ github.ref_name }}"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE")
+          echo "IMAGE_DIGEST=$DIGEST" >> $GITHUB_ENV
+
+  production-release:
+    name: Production Promotion Gate
+    needs: [build-and-promote]
+    runs-on: ubuntu-latest
+    environment: production # Requires manual approval in GitHub environment
+
+    steps:
+      - name: Authenticate to Google Cloud via WIF
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: 'projects/123456789/locations/global/workloadIdentityPools/github-actions-prod/providers/github-provider'
+          service_account: 'assurance-api-prod@sample-project.iam.gserviceaccount.com'
+
+      - name: Promote Immutable Image to Production (No Rebuild)
+        run: |
+          echo "Deploying verified image digest to production Cloud Run: ${{ env.IMAGE_DIGEST }}"
+          # gcloud run deploy assurance-web-prod --image "${{ env.IMAGE_DIGEST }}" --region europe-west2

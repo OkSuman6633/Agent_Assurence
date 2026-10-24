@@ -1,0 +1,5 @@
+project_id   = "your-gcp-project-id"
+region       = "europe-west2"
+environment  = "staging"
+image_digest = "europe-west2-docker.pkg.dev/your-gcp-project-id/assurance/assurance-app:v1.0.0"
+alert_email  = "security-ops@yourorg.com"

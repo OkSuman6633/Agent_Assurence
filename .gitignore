@@ -1,0 +1,18 @@
+# Agent Assurance Laboratory
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+*.egg-info/
+dist/
+build/
+node_modules/
+.next/
+*.tfstate
+*.tfstate.*
+.terraform/
+*.tfplan

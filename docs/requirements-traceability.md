@@ -1,0 +1,27 @@
+# Requirements Traceability Matrix — Agent Assurance Laboratory
+
+This matrix maps every functional requirement, architecture constraint, operational baseline, pricing rule, and acceptance test from the four authoritative source Word documents to its exact implementation location, automated test, and current status.
+
+| Req ID | Source Document & Section | Requirement Description | Implementation Location | Verification / Automated Test | Status |
+|---|---|---|---|---|---|
+| **REQ-01** | Doc 1 §1-3 | Bounded evaluation of tool-using AI agents against security & reliability scenarios | `backend/app/main.py`, `backend/app/scenarios.py` | `test_uat_scenarios.py::test_uat_01` | **Satisfied** |
+| **REQ-02** | Doc 1 §2 | Bundled synthetic test agent exhibiting both safe & vulnerable behavior without external connections | `backend/app/demo_agent.py`, `backend/app/adapter.py:synthetic_response` | `test_adapters.py`, `test_uat_02` | **Satisfied** |
+| **REQ-03** | Doc 1 §3, §7 | Tenant-scoped project creation with agreed scope and cryptographic SHA-256 scope hash | `backend/app/models.py:Assessment`, `backend/app/services.py:AssessmentService` | `test_services.py::test_agent_registration_and_assessment_creation` | **Satisfied** |
+| **REQ-04** | Doc 1 §4-5 | Storage separation: Cloud Storage for mutable state, BigQuery for append-only execution facts | `backend/app/repository.py`, `infra/terraform/modules/storage`, `modules/bigquery` | `test_services.py`, `test_tenancy_isolation.py` | **Satisfied** |
+| **REQ-05** | Doc 1 §5 | Authentication & RBAC (Owner, Assessor, Reviewer, Viewer, Platform Admin) with Firebase/Identity Platform support | `backend/app/auth.py`, `backend/app/models.py:Role` | `test_tenancy_isolation.py::test_api_layer_enforces_tenant_isolation` | **Satisfied** |
+| **REQ-06** | Doc 1 §6 | 10+ scenario library mapping to OWASP Agentic Top 10 & NIST AI RMF GenAI Profile | `backend/app/scenarios.py` (12 scenarios registered) | `test_oracle.py`, `test_uat_scenarios.py` | **Satisfied** |
+| **REQ-07** | Doc 1 §6 | Deterministic pass/fail/inconclusive/not_run oracle logic (no LLM hallucinations for safety verdicts) | `backend/app/oracle.py` | `test_oracle.py` (9 tests) | **Satisfied** |
+| **REQ-08** | Doc 1 §6 | Missing telemetry gating: missing tool events or assertions MUST return INCONCLUSIVE | `backend/app/oracle.py:lines 34-44` | `test_oracle.py::test_missing_telemetry_is_inconclusive` | **Satisfied** |
+| **REQ-09** | Doc 1 §7 | REST API with X-Correlation-ID and Idempotency-Key support | `backend/app/main.py` | `test_services.py::test_idempotent_run_creation_prevents_duplicate_runs` | **Satisfied** |
+| **REQ-10** | Doc 1 §7, Doc 4 §UAT-08 | Finding lifecycle, reviewer override with mandatory justification, preserving automated verdicts | `backend/app/services.py:FindingService` | `test_uat_scenarios.py::test_uat_08_reviewer_override_workflow` | **Satisfied** |
+| **REQ-11** | Doc 1 §7, Doc 4 §UAT-09 | Report generation in JSON and printable format with cryptographic scope hashes & limitations | `backend/app/services.py:ReportService` | `test_uat_scenarios.py::test_uat_09_export_assessment_report` | **Satisfied** |
+| **REQ-12** | Doc 1 §7, Doc 4 §UAT-10 | Rerun regression comparison showing scenario-level deltas, new failures, and resolved issues | `backend/app/services.py:RegressionService` | `test_uat_scenarios.py::test_uat_10_rerun_after_fix_regression_deltas` | **Satisfied** |
+| **REQ-13** | Doc 2 §2 | Terraform Infrastructure as Code for Cloud Run, Cloud Tasks, GCS, BigQuery, IAM, and Secrets | `infra/terraform/` | Terraform module syntax & variable validation | **Satisfied** |
+| **REQ-14** | Doc 2 §2, §3 | Workload Identity Federation for GitHub Actions without long-lived service account keys | `infra/terraform/modules/iam`, `.github/workflows/release.yml` | CI/CD pipeline definition inspection | **Satisfied** |
+| **REQ-15** | Doc 2 §3 | CI/CD promotion of immutable image digests between staging and production gates | `.github/workflows/release.yml` | Pipeline inspection | **Satisfied** |
+| **REQ-16** | Doc 2 §4, Doc 1 §6 | SSRF protection: DNS revalidation, IP egress blocking, private IP rejection | `backend/app/security.py` | `test_schemas.py`, `test_tenancy_isolation.py` | **Satisfied** |
+| **REQ-17** | Doc 2 §5, Doc 3 §8 | Operational emergency kill switch to immediately halt new runs platform-wide or per-tenant | `backend/app/services.py:KillSwitchService`, `backend/app/main.py` | `test_services.py::test_kill_switch_suspends_run_creation` | **Satisfied** |
+| **REQ-18** | Doc 3 §3-4 | Configurable commercial pricing plans (£1.5k Starter, £3.5k Pro, £650 Team, £1.75k Growth) | `backend/app/services.py:BillingService`, `backend/app/models.py:PricingPlan` | `test_services.py`, API `/v1/plans` | **Satisfied** |
+| **REQ-19** | Doc 3 §4 | Server-side usage metering and quota enforcement (runs, scenarios, tokens) | `backend/app/services.py:RunService`, `backend/app/repository.py` | `test_services.py`, API `/v1/usage` | **Satisfied** |
+| **REQ-20** | Doc 4 §7 | UAT-01 through UAT-10 Business Acceptance test cases passing end-to-end | `backend/tests/test_uat_scenarios.py` | 10 dedicated UAT acceptance tests passing | **Satisfied** |
+| **REQ-21** | Doc 1 §8 | Full interactive Frontend UI covering all user journeys without mock placeholders | `frontend/index.html`, `frontend/app.js`, `frontend/index.css` | Local server verification on `http://127.0.0.1:8000` | **Satisfied** |

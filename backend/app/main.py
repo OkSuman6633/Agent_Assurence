@@ -1,132 +1,505 @@
-from datetime import datetime, timezone
+"""Main FastAPI application for Agent Assurance Laboratory.
+
+Implements all required API endpoints per Doc 1 §7, Doc 2 §4-5, Doc 3 §3-4, and Doc 4 §7:
+  - POST /v1/assessments
+  - POST /v1/assessments/{id}/runs (idempotent via Idempotency-Key)
+  - GET /v1/runs/{id}
+  - GET /v1/runs/{id}/findings
+  - POST /v1/findings/{id}/reviews
+  - POST /v1/runs/{id}/report
+  - GET /v1/reports/{id}
+  - GET /v1/runs/{id}/compare/{other}
+  - Full agent registration, scenario catalog, usage, plans, kill switch, and health probes.
+"""
+from __future__ import annotations
+
+import os
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
-from collections import Counter
-from fastapi import FastAPI, HTTPException, Header
+
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from .schemas import AgentCreate, AgentView, RunRequest, RunView, ScenarioResult
-from .adapter import invoke_agent, AdapterError
-from .security import validate_endpoint, UnsafeEndpoint
-from .scenarios import get_scenario
-from .oracle import evaluate
 
-app = FastAPI(title="Agent Assurance Lab — HTTP Adapter MVP", version="0.1.0",
-              description="Bounded, synthetic-first evaluation of authorised HTTP agent endpoints.")
+from .adapter import synthetic_response
+from .auth import (
+    AuthenticatedUser,
+    get_current_user,
+    require_admin,
+    require_assessor,
+    require_owner,
+    require_reviewer,
+    require_viewer,
+)
+from .models import (
+    AgentCreateRequest,
+    AgentView,
+    Assessment,
+    AssessmentCreateRequest,
+    Finding,
+    PricingPlan,
+    RegressionComparison,
+    ReportArtifact,
+    ReportCreateRequest,
+    ReportFormat,
+    Review,
+    ReviewCreateRequest,
+    Run,
+    RunCreateRequest,
+    ScenarioDefinition,
+)
+from .repository import InMemoryRepository
+from .scenarios import get_scenario, list_scenarios
+from .services import (
+    AgentService,
+    AssessmentService,
+    BillingService,
+    FindingService,
+    KillSwitchService,
+    RegressionService,
+    ReportService,
+    RunService,
+)
 
+# ─── Global State & Dependency Wiring ────────────────────────────────
+REPO = InMemoryRepository()
+KILL_SWITCH = KillSwitchService(REPO)
+AGENT_SERVICE = AgentService(REPO)
+ASSESSMENT_SERVICE = AssessmentService(REPO)
+RUN_SERVICE = RunService(REPO, kill_switch=KILL_SWITCH)
+FINDING_SERVICE = FindingService(REPO)
+REPORT_SERVICE = ReportService(REPO)
+REGRESSION_SERVICE = RegressionService(REPO)
+BILLING_SERVICE = BillingService(REPO)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Seed default pricing plans on startup
+    await BILLING_SERVICE.seed_default_plans()
+    yield
+
+
+app = FastAPI(
+    title="Agent Assurance Laboratory API",
+    version="1.0.0",
+    description=(
+        "Production-grade, bounded assurance and reliability evaluation platform for AI agents. "
+        "Supports deterministic oracles, scenario packs, human review, reporting, and regression tracking."
+    ),
+    lifespan=lifespan,
+    openapi_tags=[
+        {"name": "System & Health", "description": "Liveness, readiness, and operational kill switches"},
+        {"name": "Agents", "description": "Agent registration, discovery, and adapter configuration"},
+        {"name": "Assessments", "description": "Assessment project lifecycle and scope definitions"},
+        {"name": "Runs", "description": "Assessment execution, progress, and scenario outcomes"},
+        {"name": "Findings & Reviews", "description": "Findings triage, human review, and audit trail"},
+        {"name": "Reports", "description": "Assessment report generation and downloads"},
+        {"name": "Regression", "description": "Scenario-level comparison between runs"},
+        {"name": "Scenarios", "description": "Versioned scenario catalog and metadata"},
+        {"name": "Pricing & Metering", "description": "Commercial plans, entitlements, and usage metrics"},
+        {"name": "Synthetic Demo Agent", "description": "Bundled in-process mock agent for testing"},
+    ],
+)
+
+# ─── Middleware: Correlation ID & CORS ───────────────────────────────
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Correlation-ID", "Idempotency-Key"],
 )
 
-AGENTS: dict[str, dict] = {}
-RUNS: dict[str, dict] = {}
-IDEMPOTENCY: dict[tuple[str, str], str] = {}
 
-@app.get("/health")
+@app.middleware("http")
+async def correlation_id_middleware(request: Request, call_next):
+    correlation_id = request.headers.get("X-Correlation-ID") or str(uuid4())
+    request.state.correlation_id = correlation_id
+    response = await call_next(request)
+    response.headers["X-Correlation-ID"] = correlation_id
+    return response
+
+
+# ─── Central Exception Handlers ──────────────────────────────────────
+@app.exception_handler(ValueError)
+async def value_error_handler(request: Request, exc: ValueError):
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={
+            "code": "BAD_REQUEST",
+            "message": str(exc),
+            "correlation_id": getattr(request.state, "correlation_id", "unknown"),
+        },
+    )
+
+
+@app.exception_handler(KeyError)
+async def key_error_handler(request: Request, exc: KeyError):
+    return JSONResponse(
+        status_code=status.HTTP_404_NOT_FOUND,
+        content={
+            "code": "NOT_FOUND",
+            "message": str(exc).strip("'"),
+            "correlation_id": getattr(request.state, "correlation_id", "unknown"),
+        },
+    )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "code": f"HTTP_{exc.status_code}",
+            "message": exc.detail,
+            "correlation_id": getattr(request.state, "correlation_id", "unknown"),
+        },
+        headers=exc.headers,
+    )
+
+
+# ─── Health & Operational Controls ───────────────────────────────────
+@app.get("/health", tags=["System & Health"])
 def health():
-    return {"status": "ok"}
+    """Liveness probe."""
+    return {"status": "ok", "version": "1.0.0"}
 
 
-@app.post("/v1/agents", response_model=AgentView, status_code=201)
-def register_agent(body: AgentCreate):
-    if not body.authorised:
-        raise HTTPException(400, "Explicit authorisation must be confirmed before registering an agent.")
-    if body.adapter_type.value == "http":
-        if not body.endpoint_url:
-            raise HTTPException(400, "endpoint_url is required for HTTP adapter.")
-        if not body.allowed_hosts:
-            raise HTTPException(400, "At least one explicit allowed host is required.")
-        try:
-            validate_endpoint(str(body.endpoint_url), body.allowed_hosts)
-        except UnsafeEndpoint as exc:
-            raise HTTPException(400, str(exc)) from exc
-    elif body.endpoint_url:
-        raise HTTPException(400, "Synthetic adapter must not include a remote endpoint.")
-    agent_id = str(uuid4())
-    record = {
-        "agent_id": agent_id, "name": body.name, "adapter_type": body.adapter_type.value,
-        "endpoint_url": str(body.endpoint_url) if body.endpoint_url else None,
-        "allowed_hosts": body.allowed_hosts, "auth_env_var": body.auth_env_var,
-        "timeout_seconds": body.timeout_seconds, "authorised": body.authorised,
-        "scope_description": body.scope_description,
+@app.get("/ready", tags=["System & Health"])
+async def ready():
+    """Readiness probe."""
+    plans = await REPO.list_plans()
+    return {"status": "ready", "plans_loaded": len(plans)}
+
+
+@app.get("/v1/kill-switch", tags=["System & Health"])
+def get_kill_switch_status(user: AuthenticatedUser = Depends(require_viewer)):
+    """Inspect operational emergency kill switch status."""
+    return KILL_SWITCH.get_status()
+
+
+@app.post("/v1/kill-switch", tags=["System & Health"])
+async def set_kill_switch(
+    body: dict[str, Any],
+    user: AuthenticatedUser = Depends(require_admin),
+):
+    """Emergency kill switch to suspend new runs platform-wide or per-tenant (Doc 2 §5, Doc 3 §8)."""
+    enabled = bool(body.get("enabled", True))
+    target_tenant = body.get("tenant_id")
+    reason = str(body.get("reason", "Operator invoked kill switch."))
+    return await KILL_SWITCH.set_kill_switch(user, enabled, tenant_id=target_tenant, reason=reason)
+
+
+# ─── Agents ──────────────────────────────────────────────────────────
+@app.post("/v1/agents", response_model=AgentView, status_code=status.HTTP_201_CREATED, tags=["Agents"])
+async def register_agent(
+    body: AgentCreateRequest,
+    user: AuthenticatedUser = Depends(require_assessor),
+):
+    """Register an authorized agent endpoint or synthetic target (Doc 1 §5)."""
+    return await AGENT_SERVICE.register_agent(user, body)
+
+
+@app.get("/v1/agents", response_model=list[AgentView], tags=["Agents"])
+async def list_agents(user: AuthenticatedUser = Depends(require_viewer)):
+    """List all registered agents for the tenant."""
+    return await AGENT_SERVICE.list_agents(user)
+
+
+@app.get("/v1/agents/{agent_id}", response_model=AgentView, tags=["Agents"])
+async def get_agent(
+    agent_id: str,
+    user: AuthenticatedUser = Depends(require_viewer),
+):
+    """Get single registered agent details."""
+    return await AGENT_SERVICE.get_agent(user, agent_id)
+
+
+# ─── Assessments ─────────────────────────────────────────────────────
+@app.post("/v1/assessments", response_model=Assessment, status_code=status.HTTP_201_CREATED, tags=["Assessments"])
+async def create_assessment(
+    body: AssessmentCreateRequest,
+    user: AuthenticatedUser = Depends(require_assessor),
+):
+    """Create a new tenant-scoped assessment project with scope hash (Doc 1 §3, §7)."""
+    return await ASSESSMENT_SERVICE.create_assessment(user, body)
+
+
+@app.get("/v1/assessments", response_model=list[Assessment], tags=["Assessments"])
+async def list_assessments(user: AuthenticatedUser = Depends(require_viewer)):
+    """List all assessment projects for the tenant."""
+    return await ASSESSMENT_SERVICE.list_assessments(user)
+
+
+@app.get("/v1/assessments/{assessment_id}", response_model=Assessment, tags=["Assessments"])
+async def get_assessment(
+    assessment_id: str,
+    user: AuthenticatedUser = Depends(require_viewer),
+):
+    """Get assessment project details."""
+    return await ASSESSMENT_SERVICE.get_assessment(user, assessment_id)
+
+
+# ─── Runs ────────────────────────────────────────────────────────────
+@app.post(
+    "/v1/assessments/{assessment_id}/runs",
+    response_model=Run,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["Runs"],
+)
+async def start_run(
+    assessment_id: str,
+    body: RunCreateRequest,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    x_correlation_id: str | None = Header(default=None, alias="X-Correlation-ID"),
+    user: AuthenticatedUser = Depends(require_assessor),
+):
+    """Start an assessment run with idempotent execution and deterministic oracles (Doc 1 §7)."""
+    return await RUN_SERVICE.start_run(
+        user=user,
+        assessment_id=assessment_id,
+        req=body,
+        idempotency_key=idempotency_key or "",
+        correlation_id=x_correlation_id or "",
+    )
+
+
+@app.get("/v1/runs", response_model=list[Run], tags=["Runs"])
+async def list_runs(
+    assessment_id: str | None = Query(default=None),
+    user: AuthenticatedUser = Depends(require_viewer),
+):
+    """List all evaluation runs for the tenant, optionally filtered by assessment."""
+    return await RUN_SERVICE.list_runs(user, assessment_id=assessment_id)
+
+
+@app.get("/v1/runs/{run_id}", response_model=Run, tags=["Runs"])
+async def get_run(
+    run_id: str,
+    user: AuthenticatedUser = Depends(require_viewer),
+):
+    """Get details, progress, and scenario outcomes for a run."""
+    return await RUN_SERVICE.get_run(user, run_id)
+
+
+@app.get("/v1/runs/{run_id}/findings", response_model=list[Finding], tags=["Runs"])
+async def get_run_findings(
+    run_id: str,
+    user: AuthenticatedUser = Depends(require_viewer),
+):
+    """Get all security & compliance findings generated by a specific run."""
+    return await FINDING_SERVICE.list_findings(user, run_id=run_id)
+
+
+# ─── Findings & Human Review ─────────────────────────────────────────
+@app.get("/v1/findings", response_model=list[Finding], tags=["Findings & Reviews"])
+async def list_findings(user: AuthenticatedUser = Depends(require_viewer)):
+    """List all findings across all runs for the tenant."""
+    return await FINDING_SERVICE.list_findings(user)
+
+
+@app.get("/v1/findings/{finding_id}", response_model=Finding, tags=["Findings & Reviews"])
+async def get_finding(
+    finding_id: str,
+    user: AuthenticatedUser = Depends(require_viewer),
+):
+    """Get finding details including evidence references and reviewer history."""
+    return await FINDING_SERVICE.get_finding(user, finding_id)
+
+
+@app.post("/v1/findings/{finding_id}/reviews", response_model=Review, tags=["Findings & Reviews"])
+async def review_finding(
+    finding_id: str,
+    body: ReviewCreateRequest,
+    user: AuthenticatedUser = Depends(require_reviewer),
+):
+    """Submit a reviewer disposition or override with mandatory reason (Doc 1 §7, Doc 4 §UAT-08)."""
+    return await FINDING_SERVICE.create_review(user, finding_id, body)
+
+
+@app.get("/v1/findings/{finding_id}/reviews", response_model=list[Review], tags=["Findings & Reviews"])
+async def list_finding_reviews(
+    finding_id: str,
+    user: AuthenticatedUser = Depends(require_viewer),
+):
+    """Get complete audit trail of reviewer decisions for a finding."""
+    return await FINDING_SERVICE.list_reviews(user, finding_id)
+
+
+# ─── Reports ─────────────────────────────────────────────────────────
+@app.post(
+    "/v1/runs/{run_id}/report",
+    response_model=ReportArtifact,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["Reports"],
+)
+async def generate_report(
+    run_id: str,
+    body: ReportCreateRequest,
+    user: AuthenticatedUser = Depends(require_reviewer),
+):
+    """Generate an immutable assessment report artifact in JSON or PDF format (Doc 1 §7)."""
+    return await REPORT_SERVICE.generate_report(user, run_id, format=body.format)
+
+
+@app.get("/v1/reports/{artifact_id}", tags=["Reports"])
+async def get_report_artifact(
+    artifact_id: str,
+    user: AuthenticatedUser = Depends(require_viewer),
+):
+    """Retrieve report artifact metadata and contents."""
+    artifact = await REPO.get_report_artifact(user.tenant_id, artifact_id)
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Report artifact not found.")
+    data = REPORT_SERVICE.get_report_data(artifact)
+    return {
+        "artifact": artifact,
+        "content": data,
     }
-    AGENTS[agent_id] = record
-    return AgentView(**{k:v for k,v in record.items() if k != "auth_env_var"})
 
-@app.get("/v1/agents/{agent_id}", response_model=AgentView)
-def get_agent(agent_id: str):
-    agent = AGENTS.get(agent_id)
-    if not agent:
-        raise HTTPException(404, "Agent not found.")
-    return AgentView(**{k:v for k,v in agent.items() if k != "auth_env_var"})
 
-@app.post("/v1/agents/{agent_id}/runs", response_model=RunView, status_code=202)
-async def start_run(agent_id: str, body: RunRequest, x_correlation_id: str | None = Header(default=None)):
-    agent = AGENTS.get(agent_id)
-    if not agent:
-        raise HTTPException(404, "Agent not found.")
-    if not agent["authorised"]:
-        raise HTTPException(403, "Agent is not authorised for testing.")
-    key = (agent_id, body.idempotency_key)
-    if key in IDEMPOTENCY:
-        return RUNS[IDEMPOTENCY[key]]
-    for sid in body.scenarios:
-        try:
-            get_scenario(sid)
-        except KeyError as exc:
-            raise HTTPException(400, f"Unknown scenario_id: {sid}") from exc
-    run_id = str(uuid4())
-    results = []
-    for sid in body.scenarios:
-        try:
-            observed = await invoke_agent(agent, run_id, sid, body.model_budget_tokens)
-            verdict, summary, trace, complete = evaluate(sid, observed)
-        except (AdapterError, UnsafeEndpoint, TimeoutError) as exc:
-            verdict, summary, trace, complete = "INCONCLUSIVE", f"Adapter could not establish a result ({type(exc).__name__}).", {
-                "scenario_id": sid, "error_type": type(exc).__name__, "correlation_id": x_correlation_id or run_id
-            }, False
-        results.append(ScenarioResult(scenario_id=sid, verdict=verdict, summary=summary,
-                                      trace=trace, evidence_complete=complete))
-    counts = Counter(r.verdict for r in results)
-    run = RunView(run_id=run_id, agent_id=agent_id, status="completed", scenario_pack=body.scenario_pack,
-                  results=results, created_at=datetime.now(timezone.utc).isoformat(),
-                  summary={v: counts.get(v, 0) for v in ["PASS","FAIL","INCONCLUSIVE","NOT RUN"]})
-    RUNS[run_id] = run
-    IDEMPOTENCY[key] = run_id
-    return run
+@app.get("/v1/reports/{artifact_id}/download", tags=["Reports"])
+async def download_report(
+    artifact_id: str,
+    user: AuthenticatedUser = Depends(require_viewer),
+):
+    """Download the report artifact as a file."""
+    artifact = await REPO.get_report_artifact(user.tenant_id, artifact_id)
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Report artifact not found.")
+    data = REPORT_SERVICE.get_report_data(artifact)
 
-@app.get("/v1/agents", response_model=list[AgentView])
-def list_agents():
-    return [AgentView(**{k: v for k, v in agent.items() if k != "auth_env_var"}) for agent in AGENTS.values()]
+    if artifact.format == ReportFormat.json:
+        return JSONResponse(
+            content=data,
+            headers={"Content-Disposition": f'attachment; filename="assessment-report-{artifact_id}.json"'},
+        )
+    else:
+        # Printable plaintext/markdown formatted report representing PDF export
+        lines = [
+            "=" * 70,
+            "AGENT ASSURANCE LABORATORY — OFFICIAL ASSESSMENT REPORT",
+            "=" * 70,
+            f"Report ID: {artifact.artifact_id}",
+            f"Run ID:    {artifact.run_id}",
+            f"Tenant:    {artifact.tenant_id}",
+            f"Generated: {artifact.created_at}",
+            "=" * 70,
+            "",
+            "EXECUTIVE SUMMARY & VERDICTS:",
+            f"Status:  {data.get('run', {}).get('status', 'N/A')}",
+            f"Summary: {data.get('run', {}).get('summary', {})}",
+            "",
+            "SCENARIO RESULTS:",
+        ]
+        for r in data.get("results", []):
+            lines.append(f"  [{r.get('verdict')}] {r.get('scenario_id')}: {r.get('summary')}")
+        lines.extend([
+            "",
+            "FINDINGS:",
+        ])
+        for f in data.get("findings", []):
+            lines.append(f"  - [{f.get('severity').upper()}] {f.get('title')}: {f.get('description')}")
+        lines.extend([
+            "",
+            "=" * 70,
+            "KNOWN METHODOLOGICAL LIMITATIONS:",
+        ])
+        for lim in data.get("known_limitations", []):
+            lines.append(f"  * {lim}")
+        lines.append("=" * 70)
 
-@app.get("/v1/runs", response_model=list[RunView])
-def list_runs():
-    return list(RUNS.values())
+        return PlainTextResponse(
+            content="\n".join(lines),
+            headers={"Content-Disposition": f'attachment; filename="assessment-report-{artifact_id}.txt"'},
+        )
 
-@app.get("/v1/runs/{run_id}", response_model=RunView)
-def get_run(run_id: str):
-    run = RUNS.get(run_id)
-    if not run:
-        raise HTTPException(404, "Run not found.")
-    return run
 
-from fastapi.responses import FileResponse
+# ─── Regression Comparison ───────────────────────────────────────────
+@app.get(
+    "/v1/runs/{run_id}/compare/{other_run_id}",
+    response_model=RegressionComparison,
+    tags=["Regression"],
+)
+async def compare_runs(
+    run_id: str,
+    other_run_id: str,
+    user: AuthenticatedUser = Depends(require_viewer),
+):
+    """Compare two evaluation runs to identify delta, regressions, and resolved issues (Doc 1 §7, Doc 4 §UAT-10)."""
+    return await REGRESSION_SERVICE.compare_runs(
+        user=user,
+        baseline_run_id=other_run_id,
+        current_run_id=run_id,
+    )
 
+
+# ─── Scenario Catalog ────────────────────────────────────────────────
+@app.get("/v1/scenarios", response_model=list[ScenarioDefinition], tags=["Scenarios"])
+def list_available_scenarios():
+    """List all versioned scenarios available in the testing library (Doc 1 §6)."""
+    return list_scenarios()
+
+
+@app.get("/v1/scenarios/{scenario_id}", response_model=ScenarioDefinition, tags=["Scenarios"])
+def get_scenario_definition(scenario_id: str):
+    """Get single scenario specification and assertion rules."""
+    return get_scenario(scenario_id)
+
+
+# ─── Pricing & Metering ──────────────────────────────────────────────
+@app.get("/v1/plans", response_model=list[PricingPlan], tags=["Pricing & Metering"])
+async def list_pricing_plans():
+    """List all active commercial pricing plans (Doc 3 §3-4)."""
+    return await BILLING_SERVICE.list_plans()
+
+
+@app.post("/v1/plans", response_model=PricingPlan, tags=["Pricing & Metering"])
+async def create_or_update_plan(
+    body: PricingPlan,
+    user: AuthenticatedUser = Depends(require_admin),
+):
+    """Configure or update a commercial pricing plan (privileged admin only)."""
+    return await BILLING_SERVICE.create_or_update_plan(user, body)
+
+
+@app.get("/v1/usage", tags=["Pricing & Metering"])
+async def get_usage_summary(user: AuthenticatedUser = Depends(require_viewer)):
+    """Get tenant quota usage and metering summary."""
+    return await BILLING_SERVICE.get_usage_summary(user)
+
+
+# ─── Bundled Synthetic Agent Endpoint (Local Test Harness) ───────────
+@app.post("/v1/agent/run", tags=["Synthetic Demo Agent"])
+def run_bundled_agent(body: dict[str, Any], hardened: bool = Query(default=False)):
+    """In-process mock agent endpoint for safe local testing and demonstration without external connections."""
+    sid = body.get("scenario_id", "")
+    try:
+        return synthetic_response(sid, hardened=hardened)
+    except KeyError:
+        return {
+            "output": f"Unhandled scenario: {sid}",
+            "tool_events": [],
+            "state_assertions": {},
+        }
+
+
+# ─── Static Frontend Serving ─────────────────────────────────────────
 frontend_path = Path(__file__).resolve().parent.parent.parent / "frontend"
 
-@app.get("/")
-def serve_index():
+@app.get("/", include_in_schema=False)
+def serve_root():
     index_file = frontend_path / "index.html"
     if index_file.is_file():
         return FileResponse(index_file)
     return {"message": "Agent Assurance Lab API is running. See /docs for Swagger UI."}
 
+
 if frontend_path.is_dir():
     app.mount("/assets", StaticFiles(directory=str(frontend_path)), name="frontend_assets")
     app.mount("/", StaticFiles(directory=str(frontend_path), html=True), name="frontend")
-
-
