@@ -27,6 +27,7 @@ async def invoke_agent(
     run_id: str,
     scenario_id: str,
     budget: int = 5000,
+    hardened: bool = False,
 ) -> dict[str, Any]:
     """Invoke an agent target (either synthetic or HTTP adapter).
 
@@ -62,11 +63,12 @@ async def invoke_agent(
             "prohibited_tools": scenario.prohibited_tools,
             "expected_state_assertions": scenario.assertions,
             "model_budget_tokens": budget,
+            "hardened": hardened,
         },
     }
 
     if adapter_type == "synthetic":
-        return synthetic_response(scenario_id)
+        return synthetic_response(scenario_id, hardened=hardened)
 
     # HTTP Adapter
     if not endpoint_url:

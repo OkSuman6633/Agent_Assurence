@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Agent Assurance Laboratory — Production Control Studio</title>
-  <meta name="description" content="Enterprise evaluation platform for AI agents: reproducible evidence, deterministic oracles, security findings, human review, and regression tracking.">
+  <title>Agent Assurance Laboratory — AI Agent Security & Policy Scanner</title>
+  <meta name="description" content="Simple, direct security and policy assurance scanner for AI agents. Enter any local or deployed URL to test against 12 deterministic safety rules.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -13,7 +13,7 @@
 <body>
   <div class="app-container">
     <!-- Header -->
-    <header class="top-nav" id="top-nav">
+    <header class="top-nav">
       <div class="nav-brand">
         <div class="brand-icon">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -22,780 +22,190 @@
         </div>
         <div class="brand-text">
           <h1>Agent Assurance Laboratory</h1>
-          <span class="badge-tag">Security & Reliability Control Plane</span>
+          <span class="badge-tag">AI Agent Security & Policy Scanner</span>
         </div>
       </div>
 
       <div class="nav-controls">
-        <div class="tenant-selector" title="Active Tenant Context">
-          <span class="tenant-label">&#127970; Tenant:</span>
-          <select id="tenant-select" class="tenant-dropdown">
-            <option value="tenant-alpha" selected>tenant-alpha (Acme AI)</option>
-            <option value="tenant-bravo">tenant-bravo (FinCorp Labs)</option>
-          </select>
-        </div>
-
-        <div class="role-badge" id="user-role-badge">
-          <span class="role-dot"></span>
-          <span id="user-role-text">Owner / Assessor</span>
-        </div>
-
-        <div class="status-indicator" id="backend-status-pill" title="Checking backend health...">
+        <div class="status-indicator" id="backend-status-pill">
           <span class="status-dot pulse"></span>
           <span class="status-label" id="backend-status-text">Connecting...</span>
         </div>
-
-        <a href="/docs" target="_blank" class="nav-link" id="nav-api-docs">
+        <a href="/docs" target="_blank" class="nav-link">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
             <polyline points="14 2 14 8 20 8"></polyline>
-            <line x1="16" y1="13" x2="8" y2="13"></line>
-            <line x1="16" y1="17" x2="8" y2="17"></line>
-            <polyline points="10 9 9 9 8 9"></polyline>
           </svg>
           API Docs
         </a>
       </div>
     </header>
 
-    <!-- Navigation Bar -->
-    <nav class="main-nav-bar" id="main-nav-bar">
-      <button type="button" class="nav-tab-btn active" data-view="view-dashboard">
-        <span class="tab-icon">&#128202;</span> Dashboard
-      </button>
-      <button type="button" class="nav-tab-btn" data-view="view-agents">
-        <span class="tab-icon">&#129302;</span> Agents & Adapters
-      </button>
-      <button type="button" class="nav-tab-btn" data-view="view-assessments">
-        <span class="tab-icon">&#128196;</span> Assessments
-      </button>
-      <button type="button" class="nav-tab-btn" data-view="view-runner">
-        <span class="tab-icon">&#9879;</span> Scenario Runner
-      </button>
-      <button type="button" class="nav-tab-btn" data-view="view-findings">
-        <span class="tab-icon">&#128737;</span> Findings & Reviews
-        <span class="badge-count hidden" id="findings-count-badge">0</span>
-      </button>
-      <button type="button" class="nav-tab-btn" data-view="view-reports">
-        <span class="tab-icon">&#128229;</span> Reports & Exports
-      </button>
-      <button type="button" class="nav-tab-btn" data-view="view-regression">
-        <span class="tab-icon">&#128260;</span> Regression Studio
-      </button>
-      <button type="button" class="nav-tab-btn" data-view="view-pricing">
-        <span class="tab-icon">&#128179;</span> Commercial Plans & Quotas
-      </button>
-      <button type="button" class="nav-tab-btn" data-view="view-ops">
-        <span class="tab-icon">&#9888;</span> System Ops & Kill Switch
-      </button>
-    </nav>
+    <!-- Main Command Center Card -->
+    <main class="scanner-hero-card">
+      <div class="hero-header">
+        <h2>Evaluate AI Agent Security & Policy Boundaries</h2>
+        <p class="hero-desc">
+          Enter any agent endpoint URL (local or deployed) or test with the bundled synthetic agent.
+          The laboratory immediately probes the agent against 12 deterministic safety rules and returns whether it violates any policy.
+        </p>
+      </div>
 
-    <!-- Emergency Kill Switch Banner (Shown if active) -->
-    <div id="kill-switch-banner" class="kill-switch-banner hidden">
-      <span class="banner-icon">&#9888;</span>
-      <span id="kill-switch-banner-text">OPERATIONAL EMERGENCY KILL SWITCH ACTIVE: Assessment execution is temporarily suspended.</span>
-    </div>
-
-    <!-- MAIN VIEW CONTAINER -->
-    <main class="content-container">
-
-      <!-- ═══════════ VIEW 1: DASHBOARD ═══════════ -->
-      <section id="view-dashboard" class="app-view active">
-        <div class="view-header">
-          <div>
-            <h2>Assurance Posture Dashboard</h2>
-            <p class="view-subtitle">Overview of agent evaluations, security findings, pass rates, and entitlement usage.</p>
+      <form id="scanner-form" class="scanner-form">
+        <!-- Target Input Bar -->
+        <div class="input-action-bar">
+          <div class="url-input-container">
+            <span class="input-icon">&#128279;</span>
+            <input 
+              type="text" 
+              id="agent-url-input" 
+              placeholder="Enter Agent URL (e.g. http://127.0.0.1:8000/v1/agent/run or leave empty for synthetic demo)"
+              autocomplete="off"
+            >
+            <button type="button" class="btn-clear-input" id="btn-clear-url" title="Clear input">&times;</button>
           </div>
-          <button type="button" class="btn-primary" id="btn-quick-run-demo">
-            &#9889; Run Quick Synthetic Demo
+
+          <button type="submit" class="btn-primary btn-scan" id="btn-run-scan">
+            <span class="btn-scan-icon">&#9654;</span>
+            <span id="btn-scan-text">Run Assurance Evaluation</span>
+            <span class="btn-spinner hidden" id="scan-spinner"></span>
           </button>
         </div>
 
-        <!-- Metrics Grid -->
-        <div class="metrics-grid">
-          <div class="metric-card">
-            <span class="metric-label">Active Agents</span>
-            <div class="metric-value-row">
-              <span class="metric-num" id="stat-agents">0</span>
-              <span class="metric-tag">Registered</span>
-            </div>
-            <span class="metric-subtext">Authorized test targets</span>
-          </div>
-
-          <div class="metric-card">
-            <span class="metric-label">Assessments</span>
-            <div class="metric-value-row">
-              <span class="metric-num" id="stat-assessments">0</span>
-              <span class="metric-tag">Projects</span>
-            </div>
-            <span class="metric-subtext">Scoped boundary evaluations</span>
-          </div>
-
-          <div class="metric-card">
-            <span class="metric-label">Total Runs</span>
-            <div class="metric-value-row">
-              <span class="metric-num" id="stat-runs">0</span>
-              <span class="metric-tag">Executed</span>
-            </div>
-            <span class="metric-subtext">Deterministic test runs</span>
-          </div>
-
-          <div class="metric-card alert-card">
-            <span class="metric-label">Open Findings</span>
-            <div class="metric-value-row">
-              <span class="metric-num text-danger" id="stat-findings">0</span>
-              <span class="metric-tag tag-danger">Requires Review</span>
-            </div>
-            <span class="metric-subtext">Security & compliance violations</span>
-          </div>
-
-          <div class="metric-card">
-            <span class="metric-label">Available Scenarios</span>
-            <div class="metric-value-row">
-              <span class="metric-num" id="stat-scenarios">12</span>
-              <span class="metric-tag tag-success">Active Pack</span>
-            </div>
-            <span class="metric-subtext">OWASP & NIST GenAI mapped</span>
-          </div>
-
-          <div class="metric-card">
-            <span class="metric-label">Plan Quota Remaining</span>
-            <div class="metric-value-row">
-              <span class="metric-num" id="stat-quota">50/50</span>
-              <span class="metric-tag">Runs</span>
-            </div>
-            <span class="metric-subtext">Starter Plan Allocation</span>
-          </div>
+        <!-- Quick Target Presets -->
+        <div class="presets-row">
+          <span class="presets-label">Quick Presets:</span>
+          <button type="button" class="preset-chip" id="preset-synth-vuln">
+            <span>&#9889; Synthetic Agent (Vulnerable Demo)</span>
+          </button>
+          <button type="button" class="preset-chip" id="preset-synth-hard">
+            <span>&#128737; Synthetic Agent (Hardened / Safe)</span>
+          </button>
+          <button type="button" class="preset-chip" id="preset-local-agent">
+            <span>&#128187; Local Agent (Port 8000)</span>
+          </button>
         </div>
 
-        <!-- Recent Runs & Top Findings -->
-        <div class="dashboard-split-grid">
-          <div class="card-box">
-            <div class="box-header">
-              <h3>Recent Evaluation Runs</h3>
-              <button type="button" class="btn-text-link" id="link-view-all-runs">View All &rarr;</button>
-            </div>
-            <div class="table-responsive">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>Run ID</th>
-                    <th>Pack</th>
-                    <th>Status</th>
-                    <th>Verdicts</th>
-                    <th>Started</th>
-                  </tr>
-                </thead>
-                <tbody id="recent-runs-tbody">
-                  <tr><td colspan="5" class="text-center text-muted">No runs executed yet.</td></tr>
-                </tbody>
-              </table>
-            </div>
+        <!-- Scan Options (Clean Inline Toggle) -->
+        <div class="scan-options-row">
+          <div class="option-group">
+            <span class="option-label">Evaluation Scope:</span>
+            <label class="radio-pill">
+              <input type="radio" name="scan_scope" value="all" checked>
+              <span>Full 12 Rules (OWASP Agentic & NIST GenAI)</span>
+            </label>
+            <label class="radio-pill">
+              <input type="radio" name="scan_scope" value="core">
+              <span>Core Smoke (4 Rules)</span>
+            </label>
           </div>
 
-          <div class="card-box">
-            <div class="box-header">
-              <h3>High-Priority Findings</h3>
-              <button type="button" class="btn-text-link" id="link-view-all-findings">View All &rarr;</button>
-            </div>
-            <div class="findings-mini-list" id="recent-findings-list">
-              <div class="empty-state-mini">No findings recorded. All tests passing or not run.</div>
-            </div>
+          <div class="option-group token-budget-group">
+            <label for="token-budget-input" class="option-label">Token Budget:</label>
+            <input type="number" id="token-budget-input" value="5000" min="500" max="100000" step="500">
           </div>
         </div>
-      </section>
-
-      <!-- ═══════════ VIEW 2: AGENTS & ADAPTERS ═══════════ -->
-      <section id="view-agents" class="app-view">
-        <div class="split-layout">
-          <!-- Left: Registration Form -->
-          <div class="panel form-panel">
-            <div class="panel-header">
-              <div>
-                <span class="panel-eyebrow">CONFIGURATION</span>
-                <h2>Register AI Agent</h2>
-              </div>
-              <span class="chip-counter" id="active-adapter-badge">SYNTHETIC MODE</span>
-            </div>
-            <p class="panel-desc">Define an agent boundary, adapter type, and explicit authorization constraints before testing.</p>
-
-            <!-- Quick Presets -->
-            <div class="presets-section">
-              <label class="field-label">Quick Presets</label>
-              <div class="preset-buttons">
-                <button type="button" class="btn-preset active" id="preset-synthetic">
-                  <span>&#9889; Synthetic Demo</span>
-                </button>
-                <button type="button" class="btn-preset" id="preset-local-http">
-                  <span>&#128187; Local Agent (Port 8000)</span>
-                </button>
-                <button type="button" class="btn-preset" id="preset-custom">
-                  <span>&#9881; Custom Remote</span>
-                </button>
-              </div>
-            </div>
-
-            <!-- Agent Form -->
-            <form id="agent-form" class="agent-form" novalidate>
-              <div class="form-group">
-                <label for="agent-name" class="field-label required">Agent Name</label>
-                <input type="text" id="agent-name" required minlength="1" maxlength="120" value="Synthetic Core Smoke Agent">
-              </div>
-
-              <div class="form-group">
-                <label class="field-label required">Adapter Mode</label>
-                <div class="adapter-selector">
-                  <label class="adapter-radio-card" id="card-synthetic">
-                    <input type="radio" name="adapter_type" value="synthetic" id="radio-synthetic" checked>
-                    <div class="card-content">
-                      <div class="card-title-row">
-                        <span class="card-title">Synthetic Adapter</span>
-                        <span class="tag-safe">In-Process</span>
-                      </div>
-                      <p class="card-desc">Simulates safe and vulnerable behavior safely in-memory. Zero external dependencies.</p>
-                    </div>
-                  </label>
-
-                  <label class="adapter-radio-card" id="card-http">
-                    <input type="radio" name="adapter_type" value="http" id="radio-http">
-                    <div class="card-content">
-                      <div class="card-title-row">
-                        <span class="card-title">Remote HTTP Adapter</span>
-                        <span class="tag-network">Network Call</span>
-                      </div>
-                      <p class="card-desc">Probes an authorized remote HTTP endpoint implementing the agent assurance contract.</p>
-                    </div>
-                  </label>
-                </div>
-              </div>
-
-              <!-- HTTP Specific Fields -->
-              <div id="http-fields-container" class="http-fields-section hidden">
-                <div class="form-group">
-                  <label for="endpoint-url" class="field-label required">Endpoint URL</label>
-                  <input type="url" id="endpoint-url" placeholder="https://agent.example.internal/v1/run">
-                </div>
-
-                <div class="form-group">
-                  <label for="allowed-hosts" class="field-label required">Allowed Hosts (SSRF Egress Guard)</label>
-                  <input type="text" id="allowed-hosts" placeholder="127.0.0.1, agent.example.internal">
-                  <span class="field-hint">Explicit host allowlist. Unlisted destinations are blocked at the network layer.</span>
-                </div>
-
-                <div class="form-group">
-                  <label for="auth-env-var" class="field-label">Credential Env Variable Name</label>
-                  <input type="text" id="auth-env-var" pattern="^[A-Z][A-Z0-9_]{1,127}$" placeholder="CUSTOMER_AGENT_BEARER_TOKEN">
-                  <span class="field-hint security-hint">&#128274; Security rule: Enter only the server variable name, NEVER raw secrets.</span>
-                </div>
-
-                <div class="form-group">
-                  <div class="slider-header">
-                    <label for="timeout-seconds" class="field-label">Timeout (Seconds)</label>
-                    <span class="slider-value" id="timeout-display">15s</span>
-                  </div>
-                  <input type="range" id="timeout-seconds" min="1" max="60" value="15" step="1">
-                </div>
-              </div>
-
-              <div class="form-group">
-                <label for="scope-description" class="field-label">Scope Description</label>
-                <textarea id="scope-description" rows="2" placeholder="e.g. Authorized to query knowledge base only; outbound email prohibited."></textarea>
-              </div>
-
-              <div class="form-group auth-gate-box">
-                <label class="custom-switch-label" for="authorised-switch">
-                  <input type="checkbox" id="authorised-switch" required checked>
-                  <span class="switch-slider"></span>
-                  <span class="switch-text">
-                    <strong>Explicit Testing Authorisation Confirmed</strong>
-                    <small>I confirm this target is authorized for bounded assurance evaluation.</small>
-                  </span>
-                </label>
-              </div>
-
-              <button type="submit" class="btn-primary" id="btn-submit-agent">
-                <span class="btn-text">Register Agent</span>
-                <span class="btn-spinner hidden" id="register-spinner"></span>
-              </button>
-            </form>
-            <div id="form-alert" class="alert-box hidden"></div>
-          </div>
-
-          <!-- Right: Registered Agents Table -->
-          <div class="panel list-panel">
-            <div class="panel-header">
-              <div>
-                <span class="panel-eyebrow">TENANT INVENTORY</span>
-                <h2>Registered Agent Targets</h2>
-              </div>
-              <button type="button" class="btn-secondary" id="btn-refresh-agents">Refresh</button>
-            </div>
-            <div class="agent-list" id="agents-container">
-              <div class="empty-state" id="agents-empty">
-                <div class="empty-icon">&#128392;</div>
-                <h4>No Agents Registered Yet</h4>
-                <p>Register your first target using the form on the left or the quick presets.</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- ═══════════ VIEW 3: ASSESSMENTS ═══════════ -->
-      <section id="view-assessments" class="app-view">
-        <div class="split-layout">
-          <div class="panel form-panel">
-            <div class="panel-header">
-              <div>
-                <span class="panel-eyebrow">PROJECT SCOPE</span>
-                <h2>Create Assessment</h2>
-              </div>
-            </div>
-            <p class="panel-desc">Assessments bind an authorized agent target with an immutable, auditable testing scope and SHA-256 hash.</p>
-
-            <form id="assessment-form">
-              <div class="form-group">
-                <label for="assess-title" class="field-label required">Assessment Title</label>
-                <input type="text" id="assess-title" required value="Production Release Safety Audit">
-              </div>
-
-              <div class="form-group">
-                <label for="assess-agent-select" class="field-label required">Target Agent</label>
-                <select id="assess-agent-select" class="form-select" required>
-                  <option value="">-- Select Registered Agent --</option>
-                </select>
-              </div>
-
-              <div class="form-group">
-                <label for="assess-scope" class="field-label required">Agreed Assessment Scope</label>
-                <textarea id="assess-scope" rows="4" required placeholder="Describe evaluation boundaries, tools tested, and data canary constraints..."></textarea>
-                <span class="field-hint">A cryptographic SHA-256 scope hash will be generated for auditability.</span>
-              </div>
-
-              <button type="submit" class="btn-primary" id="btn-submit-assessment">
-                <span>Create Assessment Project</span>
-              </button>
-            </form>
-          </div>
-
-          <div class="panel list-panel">
-            <div class="panel-header">
-              <div>
-                <span class="panel-eyebrow">TENANT ASSESSMENTS</span>
-                <h2>Active Assessment Projects</h2>
-              </div>
-              <button type="button" class="btn-secondary" id="btn-refresh-assessments">Refresh</button>
-            </div>
-            <div id="assessments-container" class="assessments-list">
-              <div class="empty-state">
-                <h4>No Assessments Created Yet</h4>
-                <p>Create an assessment project to organize your assurance runs and findings.</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- ═══════════ VIEW 4: SCENARIO RUNNER ═══════════ -->
-      <section id="view-runner" class="app-view">
-        <div class="runner-layout">
-          <!-- Controls Box -->
-          <div class="card-box runner-box">
-            <div class="runner-header">
-              <div>
-                <span class="panel-eyebrow">EXECUTION HARNESS</span>
-                <h2>Execute Assurance Evaluation</h2>
-              </div>
-              <div class="target-chip">
-                <span class="chip-label">Assessment:</span>
-                <select id="runner-assessment-select" class="form-select-sm">
-                  <option value="">-- Select Assessment --</option>
-                </select>
-              </div>
-            </div>
-
-            <!-- Scenario Selection Grid -->
-            <div class="scenarios-catalog-section">
-              <div class="catalog-header-row">
-                <label class="field-label">Select Evaluation Scenarios (12 Available)</label>
-                <div class="catalog-quick-actions">
-                  <button type="button" class="btn-text-link" id="btn-select-all-scenarios">Select All (12)</button>
-                  <span class="sep">&bull;</span>
-                  <button type="button" class="btn-text-link" id="btn-select-core-scenarios">Core Smoke (4)</button>
-                  <span class="sep">&bull;</span>
-                  <button type="button" class="btn-text-link" id="btn-select-none-scenarios">Deselect All</button>
-                </div>
-              </div>
-
-              <div class="scenarios-grid" id="scenarios-grid-container">
-                <!-- Dynamically populated from /v1/scenarios -->
-              </div>
-            </div>
-
-            <!-- Runner Footer: Budget, Idempotency, Action -->
-            <div class="runner-footer-row">
-              <div class="runner-config-inputs">
-                <div class="config-input-item">
-                  <label for="token-budget" class="field-label">Token Budget</label>
-                  <input type="number" id="token-budget" value="5000" min="500" max="100000" step="500">
-                </div>
-                <div class="config-input-item">
-                  <label for="run-idempotency-key" class="field-label">Idempotency Key (Optional)</label>
-                  <input type="text" id="run-idempotency-key" placeholder="auto-generated-if-empty">
-                </div>
-              </div>
-
-              <button type="button" class="btn-run" id="btn-execute-run">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <polygon points="5 3 19 12 5 21 5 3"></polygon>
-                </svg>
-                <span>Execute Assurance Run</span>
-                <span class="btn-spinner hidden" id="run-spinner"></span>
-              </button>
-            </div>
-          </div>
-
-          <!-- Live Results Viewer -->
-          <div class="card-box results-box" id="results-box">
-            <div class="results-empty" id="results-empty-state">
-              <div class="empty-icon">&#128269;</div>
-              <h4>No Active Evaluation Run</h4>
-              <p>Select scenarios above and click <strong>"Execute Assurance Run"</strong> to generate deterministic oracular results.</p>
-            </div>
-
-            <div class="results-content hidden" id="run-results-content">
-              <div class="results-header-summary">
-                <div>
-                  <div class="res-meta-row">
-                    <span class="res-run-tag" id="res-run-id">run_id</span>
-                    <span class="res-time-tag" id="res-timestamp">timestamp</span>
-                  </div>
-                  <h3 id="res-status-title">Execution Completed</h3>
-                </div>
-                <div class="verdict-summary-pills" id="res-pills">
-                  <!-- Filled with PASS / FAIL / INCONCLUSIVE counts -->
-                </div>
-              </div>
-
-              <div class="scenario-results-list" id="scenario-cards-list">
-                <!-- Scenario cards inserted dynamically -->
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- ═══════════ VIEW 5: FINDINGS & HUMAN REVIEWS ═══════════ -->
-      <section id="view-findings" class="app-view">
-        <div class="view-header">
-          <div>
-            <h2>Security & Reliability Findings</h2>
-            <p class="view-subtitle">Review identified violations, inspect evidence traces, and submit auditable disposition overrides with mandatory justification.</p>
-          </div>
-          <div class="filter-controls">
-            <select id="findings-filter-severity" class="form-select-sm">
-              <option value="all">All Severities</option>
-              <option value="critical">Critical</option>
-              <option value="high">High</option>
-              <option value="medium">Medium</option>
-            </select>
-            <select id="findings-filter-status" class="form-select-sm">
-              <option value="all">All Statuses</option>
-              <option value="open">Open</option>
-              <option value="confirmed">Confirmed</option>
-              <option value="false_positive">False Positive</option>
-              <option value="mitigated">Mitigated</option>
-            </select>
-            <button type="button" class="btn-secondary" id="btn-refresh-findings">Refresh</button>
-          </div>
-        </div>
-
-        <div class="card-box">
-          <div class="table-responsive">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Finding ID</th>
-                  <th>Severity</th>
-                  <th>Scenario</th>
-                  <th>Title & Description</th>
-                  <th>Automated Verdict</th>
-                  <th>Status</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody id="findings-table-tbody">
-                <tr><td colspan="7" class="text-center text-muted">No findings recorded.</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <!-- ═══════════ VIEW 6: REPORTS & EXPORTS ═══════════ -->
-      <section id="view-reports" class="app-view">
-        <div class="view-header">
-          <div>
-            <h2>Assessment Reports & Exports</h2>
-            <p class="view-subtitle">Generate tamper-evident, auditable report artifacts in JSON or printable format with cryptographic scope hashes and methodology limits.</p>
-          </div>
-        </div>
-
-        <div class="reports-grid">
-          <!-- Generate Report Card -->
-          <div class="card-box">
-            <h3>Generate New Report</h3>
-            <p class="card-desc">Compile run outcomes, assertions, findings, and methodological limitations into an exportable artifact.</p>
-
-            <form id="report-generate-form">
-              <div class="form-group">
-                <label for="report-run-select" class="field-label required">Select Completed Run</label>
-                <select id="report-run-select" class="form-select" required>
-                  <option value="">-- Select Run --</option>
-                </select>
-              </div>
-
-              <div class="form-group">
-                <label class="field-label required">Report Format</label>
-                <div class="format-options">
-                  <label class="radio-chip">
-                    <input type="radio" name="report_format" value="json" checked>
-                    <span>JSON Artifact</span>
-                  </label>
-                  <label class="radio-chip">
-                    <input type="radio" name="report_format" value="pdf">
-                    <span>Printable Report (PDF/Text)</span>
-                  </label>
-                </div>
-              </div>
-
-              <button type="submit" class="btn-primary" id="btn-generate-report">
-                <span>Generate Official Report</span>
-              </button>
-            </form>
-          </div>
-
-          <!-- Generated Reports List -->
-          <div class="card-box">
-            <h3>Generated Report Artifacts</h3>
-            <div id="reports-artifacts-list" class="reports-list">
-              <div class="empty-state-mini">No reports generated yet.</div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- ═══════════ VIEW 7: REGRESSION COMPARISON ═══════════ -->
-      <section id="view-regression" class="app-view">
-        <div class="view-header">
-          <div>
-            <h2>Assurance Regression Studio</h2>
-            <p class="view-subtitle">Compare baseline vs current runs to verify remediation, detect regressions, and audit changes across agent builds.</p>
-          </div>
-        </div>
-
-        <div class="card-box regression-header-card">
-          <div class="compare-selectors-row">
-            <div class="compare-col">
-              <label for="compare-baseline-run" class="field-label required">Baseline Run (Before Fix)</label>
-              <select id="compare-baseline-run" class="form-select">
-                <option value="">-- Select Baseline Run --</option>
-              </select>
-            </div>
-
-            <div class="compare-col">
-              <label for="compare-current-run" class="field-label required">Current Run (After Fix)</label>
-              <select id="compare-current-run" class="form-select">
-                <option value="">-- Select Current Run --</option>
-              </select>
-            </div>
-
-            <button type="button" class="btn-primary" id="btn-compare-runs">
-              <span>Compare Runs</span>
-            </button>
-          </div>
-        </div>
-
-        <!-- Regression Results -->
-        <div class="card-box hidden" id="regression-results-box">
-          <div class="box-header">
-            <h3>Scenario Comparison Deltas</h3>
-            <div class="delta-pills" id="regression-summary-pills"></div>
-          </div>
-
-          <div class="table-responsive">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Scenario ID</th>
-                  <th>Baseline Verdict</th>
-                  <th>Current Verdict</th>
-                  <th>Status Delta</th>
-                  <th>Notes</th>
-                </tr>
-              </thead>
-              <tbody id="regression-deltas-tbody"></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <!-- ═══════════ VIEW 8: PRICING & ENTITLEMENTS ═══════════ -->
-      <section id="view-pricing" class="app-view">
-        <div class="view-header">
-          <div>
-            <h2>Commercial Plans & Quota Metering</h2>
-            <p class="view-subtitle">Hypothesis-driven configurable commercial plans and real-time server-side usage meters (Doc 3 §3-4).</p>
-          </div>
-        </div>
-
-        <!-- Tenant Usage Meter -->
-        <div class="card-box usage-meter-box">
-          <h3>Tenant Quota Meter & Consumption</h3>
-          <div class="usage-meters-grid" id="usage-meters-grid">
-            <div class="meter-item">
-              <span class="meter-label">Active Plan</span>
-              <strong id="meter-plan-name">Starter Assessment</strong>
-            </div>
-            <div class="meter-item">
-              <span class="meter-label">Agents Used</span>
-              <strong id="meter-agents-count">0 / 5</strong>
-            </div>
-            <div class="meter-item">
-              <span class="meter-label">Runs Executed</span>
-              <strong id="meter-runs-count">0 / 50</strong>
-            </div>
-            <div class="meter-item">
-              <span class="meter-label">Scenarios Evaluated</span>
-              <strong id="meter-scenarios-count">0 / 500</strong>
-            </div>
-          </div>
-        </div>
-
-        <!-- Proposed Plans Cards -->
-        <div class="plans-grid" id="pricing-plans-grid">
-          <!-- Populated from /v1/plans -->
-        </div>
-      </section>
-
-      <!-- ═══════════ VIEW 9: SYSTEM OPS & KILL SWITCH ═══════════ -->
-      <section id="view-ops" class="app-view">
-        <div class="view-header">
-          <div>
-            <h2>System Operations & Emergency Controls</h2>
-            <p class="view-subtitle">Platform health, operational kill switch, and recovery drills (Doc 2 §5, Doc 3 §8).</p>
-          </div>
-        </div>
-
-        <div class="split-layout">
-          <div class="card-box">
-            <h3>Operational Kill Switch</h3>
-            <p class="card-desc text-danger">Emergency stop mechanism: immediately suspends new evaluation runs platform-wide or for this tenant while preserving all historical traces.</p>
-
-            <div class="kill-switch-control-box">
-              <div class="switch-status-row">
-                <span>Current Status:</span>
-                <span class="badge-tag tag-success" id="kill-switch-status-badge">NORMAL OPERATION</span>
-              </div>
-
-              <div class="form-group">
-                <label for="kill-switch-reason" class="field-label required">Justification / Incident ID</label>
-                <input type="text" id="kill-switch-reason" placeholder="e.g. Incident INC-904: Suspected downstream agent breach">
-              </div>
-
-              <div class="action-buttons-row">
-                <button type="button" class="btn-danger" id="btn-enable-kill-switch">
-                  &#9888; Activate Kill Switch
-                </button>
-                <button type="button" class="btn-secondary" id="btn-disable-kill-switch">
-                  Resume Normal Operations
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div class="card-box">
-            <h3>Platform Readiness & Diagnostics</h3>
-            <div class="diag-list">
-              <div class="diag-item">
-                <span>Deterministic Oracle Engine</span>
-                <span class="tag-success">Online (v2)</span>
-              </div>
-              <div class="diag-item">
-                <span>SSRF Egress Guard</span>
-                <span class="tag-success">Enforced</span>
-              </div>
-              <div class="diag-item">
-                <span>Multi-Tenant RBAC Layer</span>
-                <span class="tag-success">Isolated</span>
-              </div>
-              <div class="diag-item">
-                <span>Immutable Trace Store</span>
-                <span class="tag-success">Append-Only</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
+      </form>
     </main>
 
-    <!-- MODAL: Human Review & Override -->
-    <div id="review-modal" class="modal-backdrop hidden">
-      <div class="modal-dialog">
-        <div class="modal-header">
-          <h3 id="review-modal-title">Review Security Finding</h3>
-          <button type="button" class="modal-close" id="review-modal-close">&times;</button>
-        </div>
-        <div class="modal-body">
-          <p class="modal-desc" id="review-finding-desc"></p>
-
-          <form id="review-form">
-            <input type="hidden" id="review-finding-id">
-
-            <div class="form-group">
-              <label for="review-decision" class="field-label required">Reviewer Decision</label>
-              <select id="review-decision" class="form-select" required>
-                <option value="confirmed">Confirmed Violation (Action Required)</option>
-                <option value="false_positive">False Positive (Safe Sandbox / Expected Test Artifact)</option>
-                <option value="mitigated">Mitigated (Compensating Controls in Place)</option>
-                <option value="accepted_risk">Accepted Risk (Business Sign-off)</option>
-              </select>
-            </div>
-
-            <div class="form-group">
-              <label for="review-reason" class="field-label required">Business & Technical Justification (Mandatory)</label>
-              <textarea id="review-reason" rows="3" required placeholder="State exact technical or operational rationale for this decision for audit trail..."></textarea>
-            </div>
-
-            <button type="submit" class="btn-primary" id="btn-submit-review">
-              <span>Submit Audited Review Decision</span>
-            </button>
-          </form>
-
-          <!-- Prior Review History -->
-          <div class="review-history-section">
-            <h4>Review Audit History</h4>
-            <div id="review-history-container" class="history-list"></div>
-          </div>
-        </div>
+    <!-- Scanning Progress Indicator (Hidden by default) -->
+    <div id="scanning-indicator" class="scanning-indicator hidden">
+      <div class="scanning-spinner"></div>
+      <div class="scanning-text-wrap">
+        <h3>Evaluating Target Agent Against Safety Policies...</h3>
+        <p id="scanning-status-text">Probing instruction boundaries, permission gates, data exfiltration, and tool telemetry...</p>
       </div>
     </div>
 
-    <!-- MODAL: Evidence & Trace Viewer -->
+    <!-- Results Section (Visible once scan completes) -->
+    <section id="results-section" class="results-section hidden">
+      
+      <!-- Verdict Hero Banner -->
+      <div id="verdict-banner" class="verdict-banner banner-fail">
+        <div class="verdict-icon-col">
+          <span class="verdict-big-icon" id="verdict-big-icon">&#9888;</span>
+        </div>
+        <div class="verdict-text-col">
+          <div class="verdict-eyebrow" id="verdict-eyebrow">ASSURANCE EVALUATION COMPLETED</div>
+          <h2 id="verdict-headline">6 Policy Violations Detected</h2>
+          <p id="verdict-subtext">The agent executed prohibited tools, bypassed approval constraints, or exfiltrated canary data.</p>
+        </div>
+        <div class="verdict-stats-col" id="verdict-stats-pills">
+          <!-- Filled dynamically -->
+        </div>
+      </div>
+
+      <!-- Action Bar: Download Reports & Compare -->
+      <div class="results-actions-bar">
+        <div class="target-meta-info" id="target-meta-info">
+          <span>Target: <strong id="res-target-display">Synthetic Demo Agent</strong></span>
+          <span class="sep">&bull;</span>
+          <span>Run ID: <code id="res-run-id">run-1234</code></span>
+        </div>
+
+        <div class="report-buttons">
+          <a href="#" id="btn-download-json" class="btn-secondary" target="_blank">
+            <span>&#128229; Download JSON Report</span>
+          </a>
+          <a href="#" id="btn-download-text" class="btn-secondary" target="_blank">
+            <span>&#128196; Download Printable Report</span>
+          </a>
+          <button type="button" class="btn-secondary" id="btn-toggle-compare">
+            <span>&#128260; Compare Runs</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Compare Runs Drawer (Hidden by default) -->
+      <div id="compare-drawer" class="compare-drawer hidden">
+        <div class="compare-drawer-header">
+          <h3>Compare with Previous Run (Regression Delta)</h3>
+          <p class="text-sm text-muted">Identify which policy violations were resolved or newly introduced.</p>
+        </div>
+        <div class="compare-inputs-row">
+          <select id="compare-select-baseline" class="form-select"></select>
+          <button type="button" class="btn-primary" id="btn-run-comparison">Compare Now</button>
+        </div>
+        <div id="compare-deltas-container" class="compare-deltas-list"></div>
+      </div>
+
+      <!-- Rule-by-Rule Breakdown List -->
+      <div class="rules-list-container">
+        <div class="rules-header">
+          <h3>Detailed Policy & Rule Outcomes</h3>
+          <div class="rules-filter-pills">
+            <button type="button" class="filter-pill active" data-filter="all">All Rules (<span id="count-all">12</span>)</button>
+            <button type="button" class="filter-pill" data-filter="fail">Violations (<span id="count-violations">6</span>)</button>
+            <button type="button" class="filter-pill" data-filter="pass">Passed (<span id="count-passed">6</span>)</button>
+          </div>
+        </div>
+
+        <div id="rules-cards-container" class="rules-cards-grid">
+          <!-- Rendered dynamically -->
+        </div>
+      </div>
+    </section>
+
+    <!-- Evidence & Trace Modal -->
     <div id="evidence-modal" class="modal-backdrop hidden">
       <div class="modal-dialog modal-wide">
         <div class="modal-header">
-          <h3 id="modal-title">Execution Telemetry & Evidence</h3>
+          <div>
+            <h3 id="modal-title">Evidence Trace & Observability Log</h3>
+            <span class="modal-scenario-tag" id="modal-scenario-tag"></span>
+          </div>
           <button type="button" class="modal-close" id="modal-close">&times;</button>
         </div>
         <div class="modal-body">
+          <p class="evidence-modal-desc">
+            Deterministic oracle evaluation is governed strictly by observable tool calls and state transitions:
+          </p>
           <pre class="json-code-block"><code id="modal-json"></code></pre>
         </div>
       </div>
     </div>
 
-    <!-- Notification Toast -->
+    <!-- Toast Notification -->
     <div id="toast" class="toast-notification hidden"></div>
   </div>
 

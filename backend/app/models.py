@@ -414,6 +414,7 @@ class RunCreateRequest(BaseModel):
     ], min_length=1, max_length=30)
     model_budget_tokens: int = Field(default=5000, ge=1, le=100000)
     adapter_override: AdapterType | None = None
+    hardened: bool = False
 
 
 class ReviewCreateRequest(BaseModel):

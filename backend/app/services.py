@@ -236,7 +236,7 @@ class RunService:
 
         for sid in req.scenarios:
             try:
-                observed = await invoke_agent(agent_dict, run.run_id, sid, req.model_budget_tokens)
+                observed = await invoke_agent(agent_dict, run.run_id, sid, req.model_budget_tokens, hardened=req.hardened)
                 verdict, summary, trace, evidence_complete = evaluate(sid, observed)
             except (AdapterError, UnsafeEndpoint, TimeoutError) as exc:
                 verdict = Verdict.INCONCLUSIVE.value
