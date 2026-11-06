@@ -92,6 +92,10 @@ class AgentManifest(BaseModel):
     tenant_id: str
     name: str = Field(min_length=1, max_length=120)
     description: str = Field(default="", max_length=2000)
+    capabilities: list[str] = Field(default_factory=list)
+    functions: list[dict[str, Any]] = Field(default_factory=list)
+    tools: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     adapter_type: AdapterType = AdapterType.synthetic
     endpoint_url: str | None = None
     allowed_hosts: list[str] = Field(default_factory=list)
@@ -116,6 +120,10 @@ class AgentView(BaseModel):
     tenant_id: str
     name: str
     description: str
+    capabilities: list[str] = Field(default_factory=list)
+    functions: list[dict[str, Any]] = Field(default_factory=list)
+    tools: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     adapter_type: AdapterType
     endpoint_url: str | None
     allowed_hosts: list[str]
@@ -226,7 +234,6 @@ class Run(BaseModel):
     started_at: str | None = None
     ended_at: str | None = None
     summary: dict[str, int] = Field(default_factory=lambda: {"PASS": 0, "FAIL": 0, "INCONCLUSIVE": 0, "NOT RUN": 0})
-    progress: float = 1.0
     error_message: str | None = None
 
 
@@ -346,7 +353,6 @@ ReportCreateRequest = ReportRequest
 
 class ReportArtifact(BaseModel):
     artifact_id: str = Field(default_factory=lambda: str(uuid4()))
-    artifact_job_id: str = Field(default_factory=lambda: str(uuid4()))
     run_id: str
     tenant_id: str
     format: ReportFormat
@@ -381,8 +387,13 @@ class RegressionComparison(BaseModel):
 
 # ─── API Request/Response Models ──────────────────────────────────────
 class AgentCreateRequest(BaseModel):
+    agent_id: str | None = None
     name: str = Field(min_length=1, max_length=120)
     description: str = Field(default="", max_length=2000)
+    capabilities: list[str] = Field(default_factory=list)
+    functions: list[dict[str, Any]] = Field(default_factory=list)
+    tools: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     adapter_type: AdapterType = AdapterType.synthetic
     endpoint_url: str | None = None
     allowed_hosts: list[str] = Field(default_factory=list)
@@ -399,20 +410,90 @@ class AgentCreateRequest(BaseModel):
         return [v.strip().lower().rstrip(".") for v in values if v.strip()]
 
 
+class AgentUpdateRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    capabilities: list[str] | None = None
+    functions: list[dict[str, Any]] | None = None
+    tools: list[str] | None = None
+    metadata: dict[str, Any] | None = None
+    adapter_type: AdapterType | None = None
+    endpoint_url: str | None = None
+    allowed_hosts: list[str] | None = None
+    auth_env_var: str | None = None
+    timeout_seconds: float | None = None
+    authorised: bool | None = None
+    scope_description: str | None = None
+    environment: str | None = None
+    version_info: str | None = None
+
+
+class IntentDetectionRequest(BaseModel):
+    prompt: str = Field(min_length=1)
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class IntentDetectionResponse(BaseModel):
+    intent: str
+    matched_agent_id: str | None = None
+    matched_agent_name: str | None = None
+    confidence: float = 0.0
+    matched_capabilities: list[str] = Field(default_factory=list)
+    suggested_tools: list[str] = Field(default_factory=list)
+    registered_agents_considered: int = 0
+    reason: str = ""
+
+
+class AgentRoutingRequest(BaseModel):
+    prompt: str = Field(min_length=1)
+    required_capabilities: list[str] = Field(default_factory=list)
+    required_tools: list[str] = Field(default_factory=list)
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentRoutingResponse(BaseModel):
+    routed: bool
+    agent_id: str | None = None
+    agent_name: str | None = None
+    endpoint_url: str | None = None
+    matched_capabilities: list[str] = Field(default_factory=list)
+    matched_tools: list[str] = Field(default_factory=list)
+    reason: str
+    registered_agents_considered: int = 0
+
+
+class AgentValidationResponse(BaseModel):
+    valid: bool
+    agent_id: str
+    name: str
+    checks: dict[str, bool] = Field(default_factory=dict)
+    errors: list[str] = Field(default_factory=list)
+
+
+class AgentFunctionMappingResponse(BaseModel):
+    agent_id: str
+    tenant_id: str
+    name: str
+    functions: list[dict[str, Any]] = Field(default_factory=list)
+    tools: list[str] = Field(default_factory=list)
+
+
 class AssessmentCreateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     description: str = Field(default="", max_length=2000)
     scope: str = Field(default="", max_length=5000)
-    agent_id: str | None = None
-    agent_manifest_ref: str | None = None
+    agent_id: str
 
 
 class RunCreateRequest(BaseModel):
     scenario_pack: str = Field(default="core-v1", min_length=1, max_length=100)
-    scenarios: list[str] | None = None
-    model_budget: int | None = None
+    scenarios: list[str] = Field(default_factory=lambda: [
+        "allowed_tool_smoke_v1",
+        "prompt_injection_boundary_v1",
+        "approval_gate_v1",
+        "retry_idempotency_v1",
+    ], min_length=1, max_length=30)
     model_budget_tokens: int = Field(default=5000, ge=1, le=100000)
-    adapter: str | None = None
     adapter_override: AdapterType | None = None
     hardened: bool = False
 

@@ -94,20 +94,7 @@ async def get_current_user(
     """
     # Development bypass (NEVER in production)
     if _is_auth_disabled():
-        tenant_header = request.headers.get("X-Tenant-ID") or os.getenv("DEV_TENANT_ID", "dev-tenant-001")
-        role_header = request.headers.get("X-User-Role") or os.getenv("DEV_USER_ROLE", "owner")
-        try:
-            role = Role(role_header)
-        except ValueError:
-            role = Role.owner
-        return AuthenticatedUser(
-            user_id=os.getenv("DEV_USER_ID", "dev-user-001"),
-            email=os.getenv("DEV_USER_EMAIL", "dev@assurance.local"),
-            tenant_id=tenant_header,
-            role=role,
-            display_name=f"Assessor ({tenant_header})",
-            email_verified=True,
-        )
+        return _get_dev_user()
 
     if not credentials:
         raise HTTPException(

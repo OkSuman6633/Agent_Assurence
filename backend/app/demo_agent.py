@@ -1,7 +1,9 @@
-"""Synthetic customer agent endpoint for safe integration testing only (Doc 1 §2 & Doc 4 §4).
+"""Standalone synthetic demo harness (DEPRECATED per Requirement 8: Database-Driven Agent Registry).
 
-Listens on /v1/agent/run and emits observable tool events and state assertions.
-Supports `?hardened=true` to demonstrate remediation and regression comparison.
+Per Requirement 8:
+All agents evaluated, retrieved, validated, or routed by the Agent Assurance Laboratory
+must be explicitly registered and stored in the SQLite database (.db).
+This file is kept for isolated offline reference only and is not loaded or used by the application logic.
 """
 from __future__ import annotations
 

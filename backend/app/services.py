@@ -18,9 +18,13 @@ from uuid import uuid4
 from .adapter import AdapterError, invoke_agent
 from .auth import AuthenticatedUser
 from .models import (
-    AdapterType,
     AgentCreateRequest,
+    AgentFunctionMappingResponse,
     AgentManifest,
+    AgentRoutingRequest,
+    AgentRoutingResponse,
+    AgentUpdateRequest,
+    AgentValidationResponse,
     AgentView,
     Assessment,
     AssessmentCreateRequest,
@@ -28,6 +32,8 @@ from .models import (
     AuditEvent,
     Finding,
     FindingStatus,
+    IntentDetectionRequest,
+    IntentDetectionResponse,
     PricingPlan,
     RegressionComparison,
     ReportArtifact,
@@ -48,11 +54,13 @@ from .oracle import evaluate, evaluate_not_run
 from .repository import BaseRepository
 from .scenarios import get_scenario, get_scenario_ids, list_scenarios
 from .security import UnsafeEndpoint, validate_endpoint
+from .test_engine import DatabaseAgentRegistryEngine
 
 
 class AgentService:
     def __init__(self, repo: BaseRepository):
         self.repo = repo
+        self.engine = DatabaseAgentRegistryEngine(repo)
 
     async def register_agent(self, user: AuthenticatedUser, req: AgentCreateRequest) -> AgentView:
         if not req.authorised:
@@ -62,7 +70,9 @@ class AgentService:
             if not req.endpoint_url:
                 raise ValueError("endpoint_url is required for HTTP adapter.")
             if not req.allowed_hosts:
-                raise ValueError("At least one explicit allowed host is required.")
+                parsed = urlparse(req.endpoint_url)
+                host = (parsed.hostname or "127.0.0.1").lower()
+                req.allowed_hosts = list(set([host, "127.0.0.1", "localhost", "0.0.0.0"]))
             validate_endpoint(req.endpoint_url, req.allowed_hosts)
         elif req.endpoint_url:
             raise ValueError("Synthetic adapter must not include a remote endpoint.")
@@ -74,10 +84,16 @@ class AgentService:
             if len(agents) >= entitlement.agents_limit:
                 raise ValueError(f"Agent limit reached ({entitlement.agents_limit}). Upgrade your plan.")
 
+        agent_id = req.agent_id or str(uuid4())
         agent = AgentManifest(
+            agent_id=agent_id,
             tenant_id=user.tenant_id,
             name=req.name,
             description=req.description,
+            capabilities=req.capabilities,
+            functions=req.functions,
+            tools=req.tools,
+            metadata=req.metadata,
             adapter_type=req.adapter_type,
             endpoint_url=req.endpoint_url,
             allowed_hosts=req.allowed_hosts,
@@ -88,7 +104,7 @@ class AgentService:
             environment=req.environment,
             version_info=req.version_info,
         )
-        await self.repo.save_agent(agent)
+        saved = await self.repo.save_agent(agent)
 
         await self.repo.save_audit_event(AuditEvent(
             tenant_id=user.tenant_id,
@@ -96,10 +112,60 @@ class AgentService:
             actor_email=user.email,
             action="agent.registered",
             resource_type="agent",
-            resource_id=agent.agent_id,
+            resource_id=saved.agent_id,
         ))
 
-        return self._to_view(agent)
+        return self._to_view(saved)
+
+    async def update_agent(self, user: AuthenticatedUser, agent_id: str, req: AgentUpdateRequest) -> AgentView:
+        agent = await self.repo.get_agent(user.tenant_id, agent_id)
+        if not agent:
+            raise KeyError(f"Agent '{agent_id}' does not exist in the database.")
+
+        if req.name is not None:
+            agent.name = req.name
+        if req.description is not None:
+            agent.description = req.description
+        if req.capabilities is not None:
+            agent.capabilities = req.capabilities
+        if req.functions is not None:
+            agent.functions = req.functions
+        if req.tools is not None:
+            agent.tools = req.tools
+        if req.metadata is not None:
+            agent.metadata = req.metadata
+        if req.adapter_type is not None:
+            agent.adapter_type = req.adapter_type
+        if req.endpoint_url is not None:
+            agent.endpoint_url = req.endpoint_url
+        if req.allowed_hosts is not None:
+            agent.allowed_hosts = req.allowed_hosts
+        if req.auth_env_var is not None:
+            agent.auth_env_var = req.auth_env_var
+        if req.timeout_seconds is not None:
+            agent.timeout_seconds = req.timeout_seconds
+        if req.authorised is not None:
+            agent.authorised = req.authorised
+        if req.scope_description is not None:
+            agent.scope_description = req.scope_description
+        if req.environment is not None:
+            agent.environment = req.environment
+        if req.version_info is not None:
+            agent.version_info = req.version_info
+
+        agent.updated_at = datetime.now(timezone.utc).isoformat()
+        saved = await self.repo.save_agent(agent)
+
+        await self.repo.save_audit_event(AuditEvent(
+            tenant_id=user.tenant_id,
+            actor_id=user.user_id,
+            actor_email=user.email,
+            action="agent.updated",
+            resource_type="agent",
+            resource_id=saved.agent_id,
+        ))
+
+        return self._to_view(saved)
 
     async def get_agent(self, user: AuthenticatedUser, agent_id: str) -> AgentView:
         agent = await self.repo.get_agent(user.tenant_id, agent_id)
@@ -111,6 +177,34 @@ class AgentService:
         agents = await self.repo.list_agents(user.tenant_id)
         return [self._to_view(a) for a in agents]
 
+    async def delete_agent(self, user: AuthenticatedUser, agent_id: str) -> bool:
+        agent = await self.repo.get_agent(user.tenant_id, agent_id)
+        if not agent:
+            raise KeyError("Agent not found.")
+        deleted = await self.repo.delete_agent(user.tenant_id, agent_id)
+        if deleted:
+            await self.repo.save_audit_event(AuditEvent(
+                tenant_id=user.tenant_id,
+                actor_id=user.user_id,
+                actor_email=user.email,
+                action="agent.deleted",
+                resource_type="agent",
+                resource_id=agent_id,
+            ))
+        return deleted
+
+    async def validate_agent(self, user: AuthenticatedUser, agent_id: str) -> AgentValidationResponse:
+        return await self.engine.validate_agent(user.tenant_id, agent_id)
+
+    async def get_agent_functions(self, user: AuthenticatedUser, agent_id: str) -> AgentFunctionMappingResponse:
+        return await self.engine.get_function_mapping(user.tenant_id, agent_id)
+
+    async def detect_intent(self, user: AuthenticatedUser, req: IntentDetectionRequest) -> IntentDetectionResponse:
+        return await self.engine.detect_intent(user.tenant_id, req)
+
+    async def route_agent(self, user: AuthenticatedUser, req: AgentRoutingRequest) -> AgentRoutingResponse:
+        return await self.engine.route_agent(user.tenant_id, req)
+
     def _to_view(self, agent: AgentManifest) -> AgentView:
         return AgentView(**{k: v for k, v in agent.model_dump().items() if k != "auth_env_var"})
 
@@ -120,36 +214,10 @@ class AssessmentService:
         self.repo = repo
 
     async def create_assessment(self, user: AuthenticatedUser, req: AssessmentCreateRequest) -> Assessment:
-        target_agent_id = req.agent_id or req.agent_manifest_ref
-        agent = None
-        if target_agent_id:
-            agent = await self.repo.get_agent(user.tenant_id, target_agent_id)
-            if not agent:
-                all_agents = await self.repo.list_agents(user.tenant_id)
-                for a in all_agents:
-                    if a.name == target_agent_id or a.endpoint_url == target_agent_id:
-                        agent = a
-                        target_agent_id = a.agent_id
-                        break
-
+        # Verify agent exists and belongs to tenant
+        agent = await self.repo.get_agent(user.tenant_id, req.agent_id)
         if not agent:
-            # Check if any agent exists or create a synthetic agent automatically
-            all_agents = await self.repo.list_agents(user.tenant_id)
-            if all_agents:
-                agent = all_agents[0]
-                target_agent_id = agent.agent_id
-            else:
-                agent_entity = AgentManifest(
-                    tenant_id=user.tenant_id,
-                    name=req.agent_manifest_ref or "Default Synthetic Agent",
-                    adapter_type=AdapterType.synthetic,
-                    authorised=True,
-                    scope_description="Default assessment adapter",
-                )
-                await self.repo.save_agent(agent_entity)
-                agent = agent_entity
-                target_agent_id = agent_entity.agent_id
-
+            raise KeyError("Agent not found or not accessible.")
         if not agent.authorised:
             raise ValueError("Agent is not authorised for testing.")
 
@@ -158,7 +226,7 @@ class AssessmentService:
             title=req.title,
             description=req.description,
             scope=req.scope,
-            agent_id=target_agent_id,
+            agent_id=req.agent_id,
             owner_id=user.user_id,
             status=AssessmentStatus.configured,
         )
@@ -209,6 +277,11 @@ class RunService:
         if not assessment:
             raise KeyError("Assessment not found.")
 
+        # Ensure registered agents exist in database
+        registered_agents = await self.repo.list_agents(user.tenant_id)
+        if not registered_agents:
+            raise ValueError("No registered agents are available in the database. Please register an agent before running evaluations.")
+
         # Idempotency check
         if idempotency_key:
             existing = await self.repo.get_run_by_idempotency_key(
@@ -217,27 +290,12 @@ class RunService:
             if existing:
                 return existing
 
-        # Validate agent
+        # Validate agent directly from the database
         agent = await self.repo.get_agent(user.tenant_id, assessment.agent_id)
         if not agent:
-            raise KeyError("Agent not found.")
+            raise KeyError(f"Agent '{assessment.agent_id}' does not exist in the database. Only agents explicitly registered in the database can be evaluated.")
         if not agent.authorised:
             raise ValueError("Agent is not authorised for testing.")
-
-        # Resolve scenarios list from pack if not explicitly provided
-        scenarios = req.scenarios
-        if not scenarios:
-            if req.scenario_pack in ["all", "all-12", "full"]:
-                scenarios = [s.scenario_id for s in list_scenarios()]
-            else:
-                scenarios = [
-                    "allowed_tool_smoke_v1",
-                    "prompt_injection_boundary_v1",
-                    "approval_gate_v1",
-                    "retry_idempotency_v1",
-                ]
-
-        budget = req.model_budget if req.model_budget is not None else req.model_budget_tokens
 
         # Quota check
         entitlement = await self.repo.get_entitlement(user.tenant_id)
@@ -245,12 +303,12 @@ class RunService:
             runs = await self.repo.list_runs(user.tenant_id)
             if len(runs) >= entitlement.runs_limit:
                 raise ValueError(f"Run limit reached ({entitlement.runs_limit}). Upgrade your plan.")
-            scenario_count = len(scenarios)
+            scenario_count = len(req.scenarios)
             if entitlement.scenarios_used + scenario_count > entitlement.scenarios_limit:
                 raise ValueError(f"Scenario limit would be exceeded. Remaining: {entitlement.scenarios_limit - entitlement.scenarios_used}.")
 
         # Validate all scenario IDs
-        for sid in scenarios:
+        for sid in req.scenarios:
             get_scenario(sid)  # raises KeyError if unknown
 
         # Create run record
@@ -260,8 +318,8 @@ class RunService:
             tenant_id=user.tenant_id,
             status=RunStatus.running,
             scenario_pack=req.scenario_pack,
-            scenarios_requested=scenarios,
-            model_budget_tokens=budget,
+            scenarios_requested=req.scenarios,
+            model_budget_tokens=req.model_budget_tokens,
             idempotency_key=idempotency_key,
             correlation_id=correlation_id or str(uuid4()),
             started_at=datetime.now(timezone.utc).isoformat(),
@@ -276,18 +334,10 @@ class RunService:
         findings_created: list[Finding] = []
 
         agent_dict = agent.model_dump()
-        if req.adapter:
-            if req.adapter in ["synthetic", "mock", "bundled"]:
-                agent_dict["adapter_type"] = "synthetic"
-            elif req.adapter.startswith("http://") or req.adapter.startswith("https://"):
-                agent_dict["adapter_type"] = "http"
-                agent_dict["endpoint_url"] = req.adapter
-                parsed = urlparse(req.adapter)
-                agent_dict["allowed_hosts"] = [parsed.hostname or "localhost"]
 
-        for sid in scenarios:
+        for sid in req.scenarios:
             try:
-                observed = await invoke_agent(agent_dict, run.run_id, sid, budget, hardened=req.hardened)
+                observed = await invoke_agent(agent_dict, run.run_id, sid, req.model_budget_tokens, hardened=req.hardened)
                 verdict, summary, trace, evidence_complete = evaluate(sid, observed)
             except (AdapterError, UnsafeEndpoint, TimeoutError) as exc:
                 verdict = Verdict.INCONCLUSIVE.value
@@ -338,7 +388,6 @@ class RunService:
         run.status = RunStatus.completed
         run.ended_at = datetime.now(timezone.utc).isoformat()
         run.summary = {v: counts.get(v, 0) for v in ["PASS", "FAIL", "INCONCLUSIVE", "NOT RUN"]}
-        run.progress = 1.0
         await self.repo.update_run(run)
 
         # Update assessment status
@@ -348,9 +397,9 @@ class RunService:
         await self.repo.save_usage_event(UsageEvent(
             tenant_id=user.tenant_id,
             run_id=run.run_id,
-            scenario_count=len(scenarios),
-            compute_tokens=budget,
-            billable_units=len(scenarios),
+            scenario_count=len(req.scenarios),
+            compute_tokens=req.model_budget_tokens,
+            billable_units=len(req.scenarios),
         ))
 
         # Audit event

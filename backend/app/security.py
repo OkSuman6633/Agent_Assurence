@@ -31,7 +31,10 @@ def validate_endpoint(endpoint_url: str, allowed_hosts: list[str] | None = None)
     try:
         addresses = {x[4][0] for x in socket.getaddrinfo(host, parsed.port or (443 if parsed.scheme == "https" else 80))}
     except socket.gaierror:
-        raise UnsafeEndpoint("Endpoint hostname could not be resolved.")
+        if is_local_host:
+            addresses = {"127.0.0.1"}
+        else:
+            raise UnsafeEndpoint(f"Endpoint hostname '{host}' could not be resolved.")
 
     for addr in addresses:
         ip = ipaddress.ip_address(addr)

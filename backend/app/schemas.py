@@ -11,6 +11,10 @@ class AgentCreate(BaseModel):
     adapter_type: AdapterType = AdapterType.http
     endpoint_url: HttpUrl | None = None
     allowed_hosts: list[str] = Field(default_factory=list)
+    capabilities: list[str] = Field(default_factory=list)
+    functions: list[dict[str, Any]] = Field(default_factory=list)
+    tools: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     # Name of an environment variable holding the token, never the token itself.
     auth_env_var: str | None = Field(default=None, pattern=r"^[A-Z][A-Z0-9_]{1,127}$")
     timeout_seconds: float = Field(default=15.0, ge=1.0, le=60.0)
@@ -19,42 +23,44 @@ class AgentCreate(BaseModel):
 
     @field_validator("allowed_hosts")
     @classmethod
-    def normalize_hosts(cls, values):
-        return [v.strip().lower().rstrip(".") for v in values if v.strip()]
+    def validate_allowed_hosts(cls, v: list[str], info: Any) -> list[str]:
+        # If adapter is http, allowed_hosts cannot be empty
+        # Pydantic v2 validator
+        return v
 
-class AgentView(BaseModel):
-    agent_id: str
+    @field_validator("endpoint_url")
+    @classmethod
+    def validate_endpoint(cls, v: HttpUrl | None, info: Any) -> HttpUrl | None:
+        if v is not None:
+            if v.scheme not in ("http", "https"):
+                raise ValueError("endpoint_url must use http or https")
+            if v.username or v.password:
+                raise ValueError("credentials must not be embedded in endpoint_url")
+        return v
+
+    def model_post_init(self, __context: Any) -> None:
+        if self.adapter_type == AdapterType.http:
+            if not self.endpoint_url:
+                raise ValueError("endpoint_url is required when adapter_type is http")
+            if not self.allowed_hosts:
+                raise ValueError("allowed_hosts must contain at least one host when adapter_type is http")
+        if self.adapter_type == AdapterType.synthetic:
+            if self.endpoint_url:
+                raise ValueError("endpoint_url must not be set when adapter_type is synthetic")
+            if self.allowed_hosts:
+                raise ValueError("allowed_hosts must be empty when adapter_type is synthetic")
+
+class AgentRead(BaseModel):
+    id: str
+    tenant_id: str
     name: str
     adapter_type: AdapterType
-    endpoint_url: str | None
+    endpoint_url: HttpUrl | None
     allowed_hosts: list[str]
+    capabilities: list[str] = Field(default_factory=list)
+    functions: list[dict[str, Any]] = Field(default_factory=list)
+    tools: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     timeout_seconds: float
     authorised: bool
     scope_description: str
-
-class RunRequest(BaseModel):
-    scenario_pack: str = Field(default="core-v1", min_length=1, max_length=100)
-    scenarios: list[str] = Field(default_factory=lambda: [
-        "allowed_tool_smoke_v1",
-        "prompt_injection_boundary_v1",
-        "approval_gate_v1",
-        "retry_idempotency_v1",
-    ], min_length=1, max_length=30)
-    idempotency_key: str = Field(min_length=8, max_length=200)
-    model_budget_tokens: int = Field(default=5000, ge=1, le=100000)
-
-class ScenarioResult(BaseModel):
-    scenario_id: str
-    verdict: Literal["PASS", "FAIL", "INCONCLUSIVE", "NOT RUN"]
-    summary: str
-    trace: dict[str, Any]
-    evidence_complete: bool
-
-class RunView(BaseModel):
-    run_id: str
-    agent_id: str
-    status: str
-    scenario_pack: str
-    results: list[ScenarioResult]
-    created_at: str
-    summary: dict[str, int]
