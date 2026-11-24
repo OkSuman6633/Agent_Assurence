@@ -3,9 +3,11 @@
 // Complete Frontend Application Controller
 // ══════════════════════════════════════════════════════════════════════════
 
-const API_BASE = window.location.origin.includes('8000')
-  ? window.location.origin
-  : 'http://127.0.0.1:8000';
+// auth.js resolves the API origin so the SameSite session cookie is valid.
+const API_BASE = (window.Auth && window.Auth.apiBase)
+  || (window.location.origin.includes('8000')
+    ? window.location.origin
+    : 'http://127.0.0.1:8000');
 
 // Global State
 let currentTab = 'overview';
@@ -30,8 +32,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupKillSwitch();
   setupMockAgentHarness();
 
+  // Never call protected endpoints before the auth gate has a verdict.
+  if (window.AuthGateReady) {
+    await window.AuthGateReady;
+  }
+
   await checkApiHealth();
   await refreshAllData();
+
+  // Signing in again (after an expired session) must reload tenant data.
+  document.addEventListener('auth:signed-in', async () => {
+    await checkApiHealth();
+    await refreshAllData();
+  });
 });
 
 // ─── Theme Toggle (Dark & Light) ─────────────────────────────────────────
@@ -153,6 +166,11 @@ function switchTab(tabId) {
     targetView.classList.add('active');
   }
 
+  // Workspace administration is loaded lazily, and only for authorised roles.
+  if (tabId === 'team' && window.TeamView) {
+    window.TeamView.load();
+  }
+
   // Update breadcrumb
   const breadcrumbMap = {
     overview: 'Overview',
@@ -162,6 +180,7 @@ function switchTab(tabId) {
     logs: 'Activity Logs',
     analytics: 'Performance Analytics',
     projects: 'Registered Agents',
+    team: 'Team & Access',
     billing: 'Plans & Limits',
     settings: 'Workspace Controls',
   };
@@ -441,7 +460,7 @@ window.openReviewModal = async (findingId) => {
         pastContainer.innerHTML = '';
       }
     }
-  } catch (_) {}
+  } catch (_) { }
 
   openModal('modal-review-finding');
 };
@@ -596,9 +615,9 @@ async function executePlaygroundScan() {
   indicator.classList.remove('hidden');
   resultsSec.classList.add('hidden');
 
-  const matched = registeredAgents.find(a => 
+  const matched = registeredAgents.find(a =>
     (selectedPlaygroundAgentId && a.agent_id === selectedPlaygroundAgentId) ||
-    (enteredUrl && a.endpoint_url === enteredUrl) || 
+    (enteredUrl && a.endpoint_url === enteredUrl) ||
     (enteredUrl && a.endpoint_url && a.endpoint_url.replace(/\/$/, '') === enteredUrl.replace(/\/$/, ''))
   );
 
@@ -1232,14 +1251,36 @@ function setupKillSwitch() {
   const btnToggle = document.getElementById('btn-toggle-kill-switch');
   const badge = document.getElementById('kill-switch-badge');
   const reasonInput = document.getElementById('kill-switch-reason-input');
+  let globalScopeActive = false;
 
-  fetch(`${API_BASE}/v1/kill-switch`)
-    .then(r => r.json())
-    .then(data => {
-      killSwitchEngaged = !!data.global_kill_switch;
-      updateKillSwitchUI();
-    })
-    .catch(() => {});
+  // The kill switch is tenant-scoped for workspace owners: the switch is engaged when the
+  // platform-wide flag is on OR this workspace sits in disabled_tenants.
+  function applyStatus(data) {
+    const user = window.Auth && window.Auth.currentUser ? window.Auth.currentUser() : null;
+    const tenantId = user ? user.tenant_id : null;
+    const disabledTenants = Array.isArray(data.disabled_tenants) ? data.disabled_tenants : [];
+    globalScopeActive = !!data.global_kill_switch;
+    killSwitchEngaged = globalScopeActive || (!!tenantId && disabledTenants.indexOf(tenantId) !== -1);
+    updateKillSwitchUI();
+  }
+
+  async function refreshKillSwitch() {
+    try {
+      const res = await fetch(`${API_BASE}/v1/kill-switch`);
+      if (!res.ok) return; // 401 before the session exists: keep the last known state
+      applyStatus(await res.json());
+    } catch (err) {
+      // Network hiccup: keep the last known state rather than claiming the control is off.
+    }
+  }
+
+  refreshKillSwitch();
+  document.addEventListener('auth:signed-in', refreshKillSwitch);
+  // Restored sessions resolve the principal after load; re-read then so a tenant-scoped
+  // pause is reflected without a manual refresh.
+  if (window.AuthGateReady && typeof window.AuthGateReady.then === 'function') {
+    window.AuthGateReady.then(refreshKillSwitch).catch(() => { });
+  }
 
   btnToggle.addEventListener('click', async () => {
     const reason = reasonInput.value.trim() || 'Testing pause requested.';
@@ -1251,11 +1292,13 @@ function setupKillSwitch() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: nextState, reason: reason }),
       });
+      const data = await res.json().catch(() => ({}));
 
-      if (!res.ok) throw new Error('Failed to update control');
-      killSwitchEngaged = nextState;
-      updateKillSwitchUI();
-      showToast(`Testing ${nextState ? 'PAUSED' : 'RESUMED'} successfully`, nextState ? 'error' : 'success');
+      if (!res.ok) {
+        throw new Error(data.message || 'You do not have permission to change this control.');
+      }
+      applyStatus(data);
+      showToast(`Testing ${killSwitchEngaged ? 'PAUSED' : 'RESUMED'} successfully`, killSwitchEngaged ? 'error' : 'success');
       reasonInput.value = '';
     } catch (err) {
       showToast(err.message, 'error');
@@ -1264,7 +1307,7 @@ function setupKillSwitch() {
 
   function updateKillSwitchUI() {
     if (killSwitchEngaged) {
-      badge.textContent = 'Paused (All Test Runs Blocked)';
+      badge.textContent = globalScopeActive ? 'Paused (All Test Runs Blocked)' : 'Paused (This Workspace)';
       badge.className = 'status-badge-inline engaged';
       btnToggle.textContent = 'Resume Testing';
       btnToggle.className = 'btn-secondary';
@@ -1329,7 +1372,7 @@ async function loadScenarios() {
     if (!res.ok) return;
     allScenarios = await res.json();
     populateScenariosCheckboxes();
-  } catch (_) {}
+  } catch (_) { }
 }
 
 function populateScenariosCheckboxes() {

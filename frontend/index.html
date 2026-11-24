@@ -15,7 +15,144 @@
   <link rel="stylesheet" href="index.css">
 </head>
 
-<body class="dark-theme">
+<body class="dark-theme auth-locked">
+
+  <!-- ═══════════════════════════════════════════════════════════════════
+       AUTHENTICATION GATE (email + password, RBAC-aware session)
+       Rendered until /v1/auth/me confirms a live session.
+       ═══════════════════════════════════════════════════════════════════ -->
+  <div class="auth-gate" id="auth-gate" role="dialog" aria-modal="true" aria-labelledby="auth-gate-title">
+    <div class="auth-gate-card">
+      <aside class="auth-gate-aside">
+        <div class="auth-gate-brand">
+          <div class="brand-cube-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+              <path d="M12 2L2 7.5L12 13L22 7.5L12 2Z" fill="white" fill-opacity="0.95" />
+              <path d="M2 12L12 17.5L22 12" stroke="white" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round" />
+              <path d="M2 16.5L12 22L22 16.5" stroke="white" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round" />
+            </svg>
+          </div>
+          <div class="brand-info">
+            <div class="brand-name">Assurance Lab</div>
+            <div class="brand-tier-row"><span class="brand-tier">Agent Assurance</span></div>
+          </div>
+        </div>
+
+        <h1 class="auth-gate-title" id="auth-gate-title">Prove your agents behave before your customers find out.</h1>
+        <p class="auth-gate-copy">Red-team every agent, capture immutable evidence, and gate releases on signed
+          assurance runs.</p>
+
+        <ul class="auth-gate-points">
+          <li>Role-based access for owners, assessors, reviewers and viewers</li>
+          <li>Session-bound audit trail stored in your local SQLite database</li>
+          <li>Brute-force lockout plus HttpOnly session cookies</li>
+        </ul>
+
+        <div class="auth-gate-badges">
+          <span class="auth-badge">PBKDF2 hashing</span>
+          <span class="auth-badge">HttpOnly session</span>
+          <span class="auth-badge">Audit logged</span>
+        </div>
+      </aside>
+
+      <section class="auth-gate-panel">
+        <div class="auth-tabs" role="tablist" aria-label="Authentication mode">
+          <button type="button" class="auth-tab active" data-auth-tab="signin" id="auth-tab-signin" role="tab"
+            aria-selected="true">Sign in</button>
+          <button type="button" class="auth-tab" data-auth-tab="signup" id="auth-tab-signup" role="tab"
+            aria-selected="false">Create workspace</button>
+        </div>
+
+        <div class="auth-notice hidden" id="auth-gate-notice" role="status" aria-live="polite"></div>
+
+        <!-- ─── Sign in ─── -->
+        <div id="auth-panel-signin">
+          <form id="auth-signin-form" class="auth-form" novalidate>
+            <div class="auth-field">
+              <label for="auth-signin-email">Work email</label>
+              <input type="email" id="auth-signin-email" name="email" autocomplete="username" spellcheck="false"
+                placeholder="you@company.com" required>
+            </div>
+
+            <div class="auth-field">
+              <label for="auth-signin-password">Password</label>
+              <div class="auth-password-wrap">
+                <input type="password" id="auth-signin-password" name="password" autocomplete="current-password"
+                  placeholder="Your password" required>
+                <button type="button" class="auth-password-toggle" data-toggle-password="auth-signin-password"
+                  aria-label="Show password">Show</button>
+              </div>
+            </div>
+
+            <label class="auth-checkbox-row" for="auth-signin-remember">
+              <input type="checkbox" id="auth-signin-remember">
+              <span>Keep me signed in for 30 days</span>
+            </label>
+
+            <div class="auth-error hidden" id="auth-signin-error" role="alert"></div>
+
+            <button type="submit" class="btn-primary auth-submit" id="auth-signin-submit">Sign in</button>
+          </form>
+
+          <div class="auth-demo-hint hidden" id="auth-demo-hint">
+            <span>Seeded demo workspace: <code id="auth-demo-email"></code></span>
+            <button type="button" class="auth-link-btn" id="auth-demo-fill">Use demo account</button>
+          </div>
+        </div>
+
+        <!-- ─── Create workspace ─── -->
+        <div id="auth-panel-signup" class="hidden">
+          <form id="auth-signup-form" class="auth-form" novalidate>
+            <div class="auth-grid-2">
+              <div class="auth-field">
+                <label for="auth-signup-name">Your name</label>
+                <input type="text" id="auth-signup-name" name="name" autocomplete="name" placeholder="Ada Lovelace">
+              </div>
+              <div class="auth-field">
+                <label for="auth-signup-workspace">Workspace</label>
+                <input type="text" id="auth-signup-workspace" name="organization" autocomplete="organization"
+                  placeholder="Acme AI">
+              </div>
+            </div>
+
+            <div class="auth-field">
+              <label for="auth-signup-email">Work email</label>
+              <input type="email" id="auth-signup-email" name="email" autocomplete="username" spellcheck="false"
+                placeholder="you@company.com" required>
+            </div>
+
+            <div class="auth-field">
+              <label for="auth-signup-password">Password</label>
+              <div class="auth-password-wrap">
+                <input type="password" id="auth-signup-password" name="new-password" autocomplete="new-password"
+                  placeholder="Create a password" required>
+                <button type="button" class="auth-password-toggle" data-toggle-password="auth-signup-password"
+                  aria-label="Show password">Show</button>
+              </div>
+              <p class="auth-hint" id="auth-signup-hint">Use at least 10 characters with both letters and digits.</p>
+            </div>
+
+            <div class="auth-field">
+              <label for="auth-signup-confirm">Confirm password</label>
+              <input type="password" id="auth-signup-confirm" name="confirm-password" autocomplete="new-password"
+                placeholder="Repeat the password" required>
+            </div>
+
+            <div class="auth-error hidden" id="auth-signup-error" role="alert"></div>
+
+            <button type="submit" class="btn-primary auth-submit" id="auth-signup-submit">Create workspace</button>
+          </form>
+        </div>
+
+        <p class="auth-footnote">
+          Sessions are stored in <code>agent_assurance.db</code> and carried by an HttpOnly cookie.
+        </p>
+      </section>
+    </div>
+  </div>
+
   <div class="app-shell">
 
     <!-- ─── Left Sidebar ────────────────────────────────────────────────── -->
@@ -24,9 +161,11 @@
       <div class="sidebar-brand">
         <div class="brand-cube-icon">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-            <path d="M12 2L2 7.5L12 13L22 7.5L12 2Z" fill="white" fill-opacity="0.95"/>
-            <path d="M2 12L12 17.5L22 12" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            <path d="M2 16.5L12 22L22 16.5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M12 2L2 7.5L12 13L22 7.5L12 2Z" fill="white" fill-opacity="0.95" />
+            <path d="M2 12L12 17.5L22 12" stroke="white" stroke-width="2" stroke-linecap="round"
+              stroke-linejoin="round" />
+            <path d="M2 16.5L12 22L22 16.5" stroke="white" stroke-width="2" stroke-linecap="round"
+              stroke-linejoin="round" />
           </svg>
         </div>
         <div class="brand-info">
@@ -44,7 +183,8 @@
           <div class="section-title">PLATFORM</div>
           <nav class="nav-list">
             <button type="button" class="nav-item active" data-tab="overview" id="nav-overview">
-              <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2">
                 <rect x="3" y="3" width="7" height="7"></rect>
                 <rect x="14" y="3" width="7" height="7"></rect>
                 <rect x="14" y="14" width="7" height="7"></rect>
@@ -54,7 +194,8 @@
             </button>
 
             <button type="button" class="nav-item" data-tab="playground" id="nav-playground">
-              <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2">
                 <polyline points="4 17 10 11 4 5"></polyline>
                 <line x1="12" y1="19" x2="20" y2="19"></line>
               </svg>
@@ -62,7 +203,8 @@
             </button>
 
             <button type="button" class="nav-item" data-tab="test-runs" id="nav-test-runs">
-              <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2">
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                 <polyline points="14 2 14 8 20 8"></polyline>
                 <line x1="16" y1="13" x2="8" y2="13"></line>
@@ -74,7 +216,8 @@
             </button>
 
             <button type="button" class="nav-item" data-tab="flight-recorder" id="nav-flight-recorder">
-              <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2">
                 <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
               </svg>
               <span>Alerts &amp; Findings</span>
@@ -87,7 +230,8 @@
         <div class="nav-section">
           <div class="section-header-row">
             <span class="section-title">REGISTERED AGENTS</span>
-            <button type="button" class="btn-section-action" id="btn-quick-new-project" title="Register New Agent">
+            <button type="button" class="btn-section-action" id="btn-quick-new-project" title="Register New Agent"
+              data-permission="agents:write">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <line x1="12" y1="5" x2="12" y2="19"></line>
                 <line x1="5" y1="12" x2="19" y2="12"></line>
@@ -96,7 +240,8 @@
           </div>
           <!-- View All Agents Tab Link -->
           <button type="button" class="nav-item" data-tab="projects" id="nav-manage-agents" style="margin-bottom: 6px;">
-            <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2">
               <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
               <line x1="8" y1="21" x2="16" y2="21"></line>
               <line x1="12" y1="17" x2="12" y2="21"></line>
@@ -115,7 +260,8 @@
           <div class="section-title">MONITORING</div>
           <nav class="nav-list">
             <button type="button" class="nav-item" data-tab="logs" id="nav-logs">
-              <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2">
                 <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
                 <polyline points="13 2 13 9 20 9"></polyline>
               </svg>
@@ -123,7 +269,8 @@
             </button>
 
             <button type="button" class="nav-item" data-tab="analytics" id="nav-analytics">
-              <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2">
                 <line x1="18" y1="20" x2="18" y2="10"></line>
                 <line x1="12" y1="20" x2="12" y2="4"></line>
                 <line x1="6" y1="20" x2="6" y2="14"></line>
@@ -137,8 +284,19 @@
         <div class="nav-section">
           <div class="section-title">SETTINGS</div>
           <nav class="nav-list">
+            <button type="button" class="nav-item" data-tab="team" id="nav-team" data-permission="users:manage">
+              <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                <circle cx="9" cy="7" r="4"></circle>
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+              </svg>
+              <span>Team & Access</span>
+            </button>
             <button type="button" class="nav-item" data-tab="billing" id="nav-billing">
-              <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2">
                 <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect>
                 <line x1="1" y1="10" x2="23" y2="10"></line>
               </svg>
@@ -146,9 +304,12 @@
             </button>
 
             <button type="button" class="nav-item" data-tab="settings" id="nav-settings">
-              <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <svg class="nav-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2">
                 <circle cx="12" cy="12" r="3"></circle>
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                <path
+                  d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+                </path>
               </svg>
               <span>Workspace Controls</span>
             </button>
@@ -156,15 +317,24 @@
         </div>
       </div>
 
-      <!-- User Profile Card -->
+      <!-- Session / User Profile Card -->
       <div class="sidebar-user-footer">
-        <div class="user-avatar-circle">AL</div>
+        <div class="user-avatar-circle" id="session-avatar">—</div>
         <div class="user-meta">
           <div class="user-name-row">
-            <span class="user-name">Assurance Lab User</span>
+            <span class="user-name" id="session-name">Signed out</span>
+            <span class="session-role-chip hidden" id="session-role"></span>
           </div>
-          <span class="user-email">Connected Database: .db active</span>
+          <span class="user-email" id="session-email">No active session</span>
         </div>
+        <button type="button" class="session-signout-btn hidden" id="btn-sign-out" title="Sign out"
+          aria-label="Sign out">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+            <polyline points="16 17 21 12 16 7"></polyline>
+            <line x1="21" y1="12" x2="9" y2="12"></line>
+          </svg>
+        </button>
       </div>
     </aside>
 
@@ -195,7 +365,7 @@
           </button>
 
           <!-- Quick Action: Test an Agent -->
-          <button type="button" class="btn-top-action" id="btn-header-quick-scan">
+          <button type="button" class="btn-top-action" id="btn-header-quick-scan" data-permission="runs:execute">
             <span class="action-icon">▶</span>
             <span>Test Agent</span>
           </button>
@@ -277,7 +447,8 @@
                     <line x1="50" y1="30" x2="650" y2="30" stroke="rgba(150,150,150,0.15)" stroke-width="1" />
                     <text x="15" y="34" class="chart-axis-text">100%</text>
 
-                    <line x1="50" y1="95" x2="650" y2="95" stroke="rgba(150,150,150,0.25)" stroke-dasharray="4 4" stroke-width="1" />
+                    <line x1="50" y1="95" x2="650" y2="95" stroke="rgba(150,150,150,0.25)" stroke-dasharray="4 4"
+                      stroke-width="1" />
                     <text x="20" y="99" class="chart-axis-text">95%</text>
                     <text x="580" y="99" class="chart-avg-text">-- Avg 95% --</text>
 
@@ -292,10 +463,13 @@
                   </g>
 
                   <path id="chart-area-path" d="" fill="url(#curveGradient)" />
-                  <path id="chart-curve-path" d="" fill="none" stroke="#6366f1" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
-                  <line id="chart-hover-line" x1="0" y1="30" x2="0" y2="280" stroke="rgba(99,102,241,0.5)" stroke-width="1" stroke-dasharray="3 3" style="display:none;" />
+                  <path id="chart-curve-path" d="" fill="none" stroke="#6366f1" stroke-width="2.5"
+                    stroke-linecap="round" stroke-linejoin="round" />
+                  <line id="chart-hover-line" x1="0" y1="30" x2="0" y2="280" stroke="rgba(99,102,241,0.5)"
+                    stroke-width="1" stroke-dasharray="3 3" style="display:none;" />
                   <g id="chart-points-group"></g>
-                  <circle id="chart-hover-dot" cx="0" cy="0" r="5" fill="#6366f1" stroke="#ffffff" stroke-width="2" style="display:none;" />
+                  <circle id="chart-hover-dot" cx="0" cy="0" r="5" fill="#6366f1" stroke="#ffffff" stroke-width="2"
+                    style="display:none;" />
                 </svg>
 
                 <div class="chart-tooltip-bubble" id="chart-tooltip" style="display: none;">
@@ -390,7 +564,8 @@
           <div class="view-header-row">
             <div>
               <h2 class="view-heading">Security Alerts &amp; Findings</h2>
-              <p class="view-subheading">Review safety boundary alerts, tool activity evidence, and resolution history.</p>
+              <p class="view-subheading">Review safety boundary alerts, tool activity evidence, and resolution history.
+              </p>
             </div>
             <div class="view-actions-group">
               <button type="button" class="btn-secondary" id="btn-refresh-findings">
@@ -401,11 +576,14 @@
 
           <div class="findings-filter-row">
             <div class="filter-pill-group">
-              <button type="button" class="filter-tab-pill active" data-finding-filter="all">All (<span id="count-findings-all">0</span>)</button>
-              <button type="button" class="filter-tab-pill" data-finding-filter="open">Open (<span id="count-findings-open">0</span>)</button>
+              <button type="button" class="filter-tab-pill active" data-finding-filter="all">All (<span
+                  id="count-findings-all">0</span>)</button>
+              <button type="button" class="filter-tab-pill" data-finding-filter="open">Open (<span
+                  id="count-findings-open">0</span>)</button>
               <button type="button" class="filter-tab-pill" data-finding-filter="confirmed">Confirmed</button>
               <button type="button" class="filter-tab-pill" data-finding-filter="mitigated">Resolved</button>
-              <button type="button" class="filter-tab-pill" data-finding-filter="false_positive">Expected Behavior</button>
+              <button type="button" class="filter-tab-pill" data-finding-filter="false_positive">Expected
+                Behavior</button>
             </div>
           </div>
 
@@ -419,7 +597,8 @@
           <div class="view-header-row">
             <div>
               <h2 class="view-heading">Agent Assurance Playground</h2>
-              <p class="view-subheading">Test any local URL (like http://127.0.0.1:8001) or deployed remote agent against full safety policies.</p>
+              <p class="view-subheading">Test any local URL (like http://127.0.0.1:8001) or deployed remote agent
+                against full safety policies.</p>
             </div>
           </div>
 
@@ -433,7 +612,8 @@
                   <input type="text" id="playground-agent-url-input"
                     placeholder="Enter Agent URL (e.g. http://127.0.0.1:8002 or http://127.0.0.1:8001)"
                     autocomplete="off">
-                  <button type="button" class="btn-clear-input" id="playground-btn-clear-url" title="Clear input">&times;</button>
+                  <button type="button" class="btn-clear-input" id="playground-btn-clear-url"
+                    title="Clear input">&times;</button>
                 </div>
 
                 <button type="submit" class="btn-primary btn-scan" id="playground-btn-scan">
@@ -504,7 +684,8 @@
               <div class="verdict-text-col">
                 <div class="verdict-eyebrow" id="pg-verdict-eyebrow">TEST COMPLETED</div>
                 <h2 id="pg-verdict-headline">Safety Issues Detected</h2>
-                <p id="pg-verdict-subtext">The agent may have executed sensitive tools, bypassed confirmation gates, or leaked confidential test data.</p>
+                <p id="pg-verdict-subtext">The agent may have executed sensitive tools, bypassed confirmation gates, or
+                  leaked confidential test data.</p>
               </div>
               <div class="verdict-stats-col" id="pg-verdict-stats-pills"></div>
             </div>
@@ -535,9 +716,12 @@
               <div class="rules-header">
                 <h3>Detailed Safety Check Outcomes</h3>
                 <div class="rules-filter-pills">
-                  <button type="button" class="filter-pill active" data-pg-filter="all">All Checks (<span id="pg-count-all">12</span>)</button>
-                  <button type="button" class="filter-pill" data-pg-filter="fail">Needs Attention (<span id="pg-count-violations">0</span>)</button>
-                  <button type="button" class="filter-pill" data-pg-filter="pass">Passed (<span id="pg-count-passed">0</span>)</button>
+                  <button type="button" class="filter-pill active" data-pg-filter="all">All Checks (<span
+                      id="pg-count-all">12</span>)</button>
+                  <button type="button" class="filter-pill" data-pg-filter="fail">Needs Attention (<span
+                      id="pg-count-violations">0</span>)</button>
+                  <button type="button" class="filter-pill" data-pg-filter="pass">Passed (<span
+                      id="pg-count-passed">0</span>)</button>
                 </div>
               </div>
 
@@ -550,7 +734,8 @@
             <div class="card-header-flex">
               <div>
                 <h3 class="card-title">Quick Query Tester</h3>
-                <p class="card-subtitle">Send a quick test message directly to an agent to preview its response in real time.</p>
+                <p class="card-subtitle">Send a quick test message directly to an agent to preview its response in real
+                  time.</p>
               </div>
             </div>
             <div class="input-action-bar">
@@ -572,7 +757,8 @@
                 Send Test Message
               </button>
             </div>
-            <pre class="json-code-block mt-12" id="mock-agent-output-block"><code>Select a scenario and click 'Send Test Message' to view response.</code></pre>
+            <pre class="json-code-block mt-12"
+              id="mock-agent-output-block"><code>Select a scenario and click 'Send Test Message' to view response.</code></pre>
           </div>
         </section>
 
@@ -583,7 +769,8 @@
           <div class="view-header-row">
             <div>
               <h2 class="view-heading">Registered Agents</h2>
-              <p class="view-subheading">All agents saved in your database (<code>agent_assurance.db</code>). Launch live tests or register new agents.</p>
+              <p class="view-subheading">All agents saved in your database (<code>agent_assurance.db</code>). Launch
+                live tests or register new agents.</p>
             </div>
             <div class="view-actions-group">
               <button type="button" class="btn-secondary" id="btn-open-create-assessment-modal">
@@ -627,7 +814,8 @@
           <div class="view-header-row">
             <div>
               <h2 class="view-heading">Activity Logs &amp; Audit Trail</h2>
-              <p class="view-subheading">Complete history capturing all agent registrations, test runs, and user reviews.</p>
+              <p class="view-subheading">Complete history capturing all agent registrations, test runs, and user
+                reviews.</p>
             </div>
             <button type="button" class="btn-secondary" id="btn-refresh-audit-logs">
               ↻ Refresh Logs
@@ -649,6 +837,80 @@
               <tbody id="audit-table-body"></tbody>
             </table>
           </div>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════════════════
+             VIEW 7: TEAM & ACCESS (RBAC administration)
+             ═══════════════════════════════════════════════════════════════════ -->
+        <section class="tab-view" id="view-team">
+          <div class="view-header-row">
+            <div>
+              <h2 class="view-heading">Team & Access</h2>
+              <p class="view-subheading">Everyone in this workspace, the role assigned to them, and whether their
+                account is active.</p>
+            </div>
+            <div class="view-actions-group">
+              <button type="button" class="btn-secondary" id="btn-refresh-team">↻ Refresh</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header-flex">
+              <div>
+                <h3 class="card-title">Invite a teammate</h3>
+                <p class="card-subtitle">Accounts you create must set a new password after their first sign-in.</p>
+              </div>
+            </div>
+            <form id="team-invite-form" class="team-invite-form" novalidate>
+              <div class="team-invite-grid">
+                <div class="auth-field">
+                  <label for="team-invite-name">Full name</label>
+                  <input type="text" id="team-invite-name" class="form-input" autocomplete="off"
+                    placeholder="Ada Lovelace">
+                </div>
+                <div class="auth-field">
+                  <label for="team-invite-email">Email</label>
+                  <input type="email" id="team-invite-email" class="form-input" autocomplete="off"
+                    placeholder="ada@company.com" required>
+                </div>
+                <div class="auth-field">
+                  <label for="team-invite-role">Role</label>
+                  <select id="team-invite-role" class="form-select"></select>
+                </div>
+                <div class="auth-field">
+                  <label for="team-invite-password">Temporary password</label>
+                  <input type="password" id="team-invite-password" class="form-input" autocomplete="new-password"
+                    placeholder="Minimum 10 characters" required>
+                </div>
+                <div class="auth-field">
+                  <label aria-hidden="true">&nbsp;</label>
+                  <button type="submit" class="btn-primary" id="team-invite-submit">Create member</button>
+                </div>
+              </div>
+              <div class="auth-error hidden" id="team-invite-error" role="alert"></div>
+            </form>
+          </div>
+
+          <div class="section-title-sub mt-24">WORKSPACE MEMBERS</div>
+          <div class="table-container">
+            <table class="data-table" id="team-table">
+              <thead>
+                <tr>
+                  <th>Member</th>
+                  <th>Role</th>
+                  <th>Status</th>
+                  <th>Last sign-in</th>
+                  <th class="text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="team-table-body">
+                <tr>
+                  <td colspan="5" class="team-empty">Loading workspace members…</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="view-subheading mt-12" id="team-tenant-note"></p>
         </section>
 
         <section class="tab-view" id="view-analytics">
@@ -784,8 +1046,10 @@
         <p style="font-size: 0.95rem; color: var(--text-primary); line-height: 1.5; margin-bottom: 8px;">
           You just tested an unregistered agent URL:
         </p>
-        <div style="background: var(--bg-card-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 8px 12px; margin-bottom: 16px;">
-          <code id="save-agent-prompt-url" style="color: var(--accent-indigo); font-weight: 600;">http://127.0.0.1:8001</code>
+        <div
+          style="background: var(--bg-card-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 8px 12px; margin-bottom: 16px;">
+          <code id="save-agent-prompt-url"
+            style="color: var(--accent-indigo); font-weight: 600;">http://127.0.0.1:8001</code>
         </div>
         <p style="font-size: 0.85rem; color: var(--text-secondary);">
           Would you like to register and save this agent to your database for future 1-click testing?
@@ -896,11 +1160,13 @@
         </div>
         <div class="form-group">
           <label>Agent Purpose &amp; Scope Description</label>
-          <textarea id="m-agent-scope" class="form-input" rows="2" placeholder="Describe what this agent does and its allowed boundaries..."></textarea>
+          <textarea id="m-agent-scope" class="form-input" rows="2"
+            placeholder="Describe what this agent does and its allowed boundaries..."></textarea>
         </div>
         <div class="form-group">
           <label class="checkbox-label">
-            <input type="checkbox" id="m-agent-auth" checked required> I confirm I am authorized to test this agent endpoint
+            <input type="checkbox" id="m-agent-auth" checked required> I confirm I am authorized to test this agent
+            endpoint
           </label>
         </div>
         <div class="modal-footer">
@@ -921,7 +1187,8 @@
       <form id="form-create-assessment" class="modal-form">
         <div class="form-group">
           <label>Assessment Title</label>
-          <input type="text" id="m-assess-title" class="form-input" placeholder="e.g. Tool Safety & Boundary Audit" required>
+          <input type="text" id="m-assess-title" class="form-input" placeholder="e.g. Tool Safety & Boundary Audit"
+            required>
         </div>
         <div class="form-group">
           <label>Select Target Agent</label>
@@ -929,7 +1196,8 @@
         </div>
         <div class="form-group">
           <label>Evaluation Scope Description</label>
-          <textarea id="m-assess-scope" class="form-input" rows="3" placeholder="Define safety requirements and policies to check..." required></textarea>
+          <textarea id="m-assess-scope" class="form-input" rows="3"
+            placeholder="Define safety requirements and policies to check..." required></textarea>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn-secondary" data-close-modal>Cancel</button>
@@ -963,7 +1231,8 @@
         </div>
         <div class="form-group">
           <label>Review Notes / Explanation</label>
-          <textarea id="m-review-reason" class="form-input" rows="3" placeholder="Explain your decision..." required></textarea>
+          <textarea id="m-review-reason" class="form-input" rows="3" placeholder="Explain your decision..."
+            required></textarea>
         </div>
         <div class="past-reviews-box" id="m-past-reviews-container"></div>
         <div class="modal-footer">
@@ -1094,6 +1363,9 @@
   <!-- Toast Notifications -->
   <div class="toast-container" id="toast-container"></div>
 
+  <script src="auth.js"></script>
+  <script src="team.js"></script>
   <script src="app.js"></script>
 </body>
+
 </html>
