@@ -518,7 +518,7 @@
                 </svg>
                 Compare Two Runs
               </button>
-              <button type="button" class="btn-primary" id="btn-open-dispatch-run-modal">
+              <button type="button" class="btn-primary" id="btn-open-dispatch-run-modal" data-permission="runs:execute">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <polygon points="5 3 19 12 5 21 5 3"></polygon>
                 </svg>
@@ -674,6 +674,15 @@
             </div>
           </div>
 
+          <!-- Inline Error / Unreachable Port Banner -->
+          <div id="pg-error-banner" class="pg-error-banner hidden" role="alert">
+            <div class="pg-error-icon">🔌</div>
+            <div class="pg-error-body">
+              <div class="pg-error-title" id="pg-error-title">Agent Connection Failed</div>
+              <p class="pg-error-msg" id="pg-error-msg"></p>
+            </div>
+          </div>
+
           <!-- Evaluation Results Section -->
           <div id="pg-results-section" class="results-section hidden">
             <!-- Verdict Hero Banner -->
@@ -720,6 +729,8 @@
                       id="pg-count-all">12</span>)</button>
                   <button type="button" class="filter-pill" data-pg-filter="fail">Needs Attention (<span
                       id="pg-count-violations">0</span>)</button>
+                  <button type="button" class="filter-pill" data-pg-filter="inconclusive">Inconclusive (<span
+                      id="pg-count-inconclusive">0</span>)</button>
                   <button type="button" class="filter-pill" data-pg-filter="pass">Passed (<span
                       id="pg-count-passed">0</span>)</button>
                 </div>
@@ -773,10 +784,10 @@
                 live tests or register new agents.</p>
             </div>
             <div class="view-actions-group">
-              <button type="button" class="btn-secondary" id="btn-open-create-assessment-modal">
+              <button type="button" class="btn-secondary" id="btn-open-create-assessment-modal" data-permission="assessments:write">
                 + New Assessment Scope
               </button>
-              <button type="button" class="btn-primary" id="btn-open-register-agent-modal">
+              <button type="button" class="btn-primary" id="btn-open-register-agent-modal" data-permission="agents:write">
                 + Register New Agent
               </button>
             </div>
@@ -911,6 +922,66 @@
             </table>
           </div>
           <p class="view-subheading mt-12" id="team-tenant-note"></p>
+
+          <div class="section-title-sub mt-24">ROLE-BASED ACCESS CONTROL (RBAC) PERMISSIONS MATRIX</div>
+          <div class="card mt-12">
+            <div class="table-container">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Role</th>
+                    <th>Register Agents</th>
+                    <th>Assessments &amp; Runs</th>
+                    <th>Review Findings</th>
+                    <th>Generate Reports</th>
+                    <th>Configure Plans &amp; Kill Switch</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><strong>Workspace Owner</strong></td>
+                    <td><span class="status-chip chip-pass">Yes</span></td>
+                    <td><span class="status-chip chip-pass">Yes</span></td>
+                    <td><span class="status-chip chip-pass">Yes</span></td>
+                    <td><span class="status-chip chip-pass">Yes</span></td>
+                    <td><span class="status-chip chip-pass">Yes</span></td>
+                  </tr>
+                  <tr>
+                    <td><strong>Platform Admin</strong></td>
+                    <td><span class="status-chip chip-pass">Yes</span></td>
+                    <td><span class="status-chip chip-pass">Yes</span></td>
+                    <td><span class="status-chip chip-pass">Yes</span></td>
+                    <td><span class="status-chip chip-pass">Yes</span></td>
+                    <td><span class="status-chip chip-pass">Yes</span></td>
+                  </tr>
+                  <tr>
+                    <td><strong>Assessor</strong></td>
+                    <td><span class="status-chip chip-pass">Yes</span></td>
+                    <td><span class="status-chip chip-pass">Yes</span></td>
+                    <td><span class="status-chip chip-neutral">View only</span></td>
+                    <td><span class="status-chip chip-neutral">View only</span></td>
+                    <td><span class="status-chip chip-fail">No</span></td>
+                  </tr>
+                  <tr>
+                    <td><strong>Reviewer</strong></td>
+                    <td><span class="status-chip chip-neutral">View only</span></td>
+                    <td><span class="status-chip chip-neutral">View only</span></td>
+                    <td><span class="status-chip chip-pass">Yes</span></td>
+                    <td><span class="status-chip chip-pass">Yes</span></td>
+                    <td><span class="status-chip chip-fail">No</span></td>
+                  </tr>
+                  <tr>
+                    <td><strong>Viewer</strong></td>
+                    <td><span class="status-chip chip-neutral">View only</span></td>
+                    <td><span class="status-chip chip-neutral">View only</span></td>
+                    <td><span class="status-chip chip-neutral">View only</span></td>
+                    <td><span class="status-chip chip-neutral">View only</span></td>
+                    <td><span class="status-chip chip-fail">No</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
         </section>
 
         <section class="tab-view" id="view-analytics">
@@ -954,7 +1025,7 @@
               <h2 class="view-heading">Plans &amp; Usage Limits</h2>
               <p class="view-subheading">View active quota limits and pricing tier configurations.</p>
             </div>
-            <button type="button" class="btn-primary" id="btn-open-create-plan-modal">
+            <button type="button" class="btn-primary" id="btn-open-create-plan-modal" data-permission="plans:manage">
               + Add Pricing Plan
             </button>
           </div>
@@ -974,6 +1045,7 @@
                   <th>Scenarios Limit</th>
                   <th>Data Retention</th>
                   <th>Status</th>
+                  <th class="text-right">Action</th>
                 </tr>
               </thead>
               <tbody id="plans-table-body"></tbody>
@@ -1005,7 +1077,7 @@
               <div class="kill-switch-form-row">
                 <input type="text" id="kill-switch-reason-input" class="form-input flex-1"
                   placeholder="Enter reason for pausing or resuming testing...">
-                <button type="button" class="btn-danger" id="btn-toggle-kill-switch">
+                <button type="button" class="btn-danger" id="btn-toggle-kill-switch" data-permission="kill_switch:manage">
                   Pause All Testing
                 </button>
               </div>
@@ -1018,7 +1090,7 @@
                 <h3 class="card-title">Load Sample Data</h3>
                 <p class="card-subtitle">Populate workspace with sample agents, test runs, and safety alerts.</p>
               </div>
-              <button type="button" class="btn-secondary" id="btn-trigger-seed">
+              <button type="button" class="btn-secondary" id="btn-trigger-seed" data-permission="agents:write">
                 ⚡ Load Sample Data
               </button>
             </div>
@@ -1281,8 +1353,8 @@
         </div>
         <div class="form-row-2">
           <div class="form-group">
-            <label>Price (Cents or Pence)</label>
-            <input type="number" id="m-plan-price" class="form-input" value="49900" required>
+            <label>Price in GBP (£ or pence, e.g. 500 for £500)</label>
+            <input type="number" id="m-plan-price" class="form-input" value="500" placeholder="e.g. 500" required>
           </div>
           <div class="form-group">
             <label>Billing Interval</label>

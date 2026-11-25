@@ -6,12 +6,15 @@ and persistent SQLite implementation storing state in a .db file.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
+import os
+import secrets
 import sqlite3
 import threading
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -30,6 +33,125 @@ from .models import (
     TenantEntitlement,
     UsageEvent,
 )
+
+
+# ─── RBAC & Authentication Helpers ────────────────────────────────────
+DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
+    "platform_admin": [
+        "agents:write", "agents:read", "agents:delete",
+        "assessments:write", "assessments:read",
+        "runs:execute", "runs:read",
+        "findings:read", "reviews:write",
+        "reports:generate", "reports:read",
+        "users:manage",
+        "plans:manage", "plans:read",
+        "kill_switch:manage",
+    ],
+    "owner": [
+        "agents:write", "agents:read", "agents:delete",
+        "assessments:write", "assessments:read",
+        "runs:execute", "runs:read",
+        "findings:read", "reviews:write",
+        "reports:generate", "reports:read",
+        "users:manage",
+        "plans:manage", "plans:read",
+        "kill_switch:manage",
+    ],
+    "assessor": [
+        "agents:write", "agents:read",
+        "assessments:write", "assessments:read",
+        "runs:execute", "runs:read",
+        "findings:read",
+        "reports:read",
+        "plans:read",
+    ],
+    "reviewer": [
+        "agents:read",
+        "assessments:read",
+        "runs:read",
+        "findings:read", "reviews:write",
+        "reports:generate", "reports:read",
+        "plans:read",
+    ],
+    "viewer": [
+        "agents:read",
+        "assessments:read",
+        "runs:read",
+        "findings:read",
+        "reports:read",
+        "plans:read",
+    ],
+}
+
+DEFAULT_USERS: list[dict[str, Any]] = [
+    {
+        "user_id": "usr-owner-001",
+        "email": "dev@assurance.local",
+        "password": "Password123!",
+        "display_name": "Development Owner",
+        "tenant_id": "dev-tenant-001",
+        "role": "owner",
+    },
+    {
+        "user_id": "usr-admin-001",
+        "email": "admin@assurance.local",
+        "password": "Admin123!",
+        "display_name": "Platform Administrator",
+        "tenant_id": "dev-tenant-001",
+        "role": "platform_admin",
+    },
+    {
+        "user_id": "usr-assessor-001",
+        "email": "assessor@assurance.local",
+        "password": "Assessor123!",
+        "display_name": "Senior Safety Assessor",
+        "tenant_id": "dev-tenant-001",
+        "role": "assessor",
+    },
+    {
+        "user_id": "usr-reviewer-001",
+        "email": "reviewer@assurance.local",
+        "password": "Reviewer123!",
+        "display_name": "Lead Findings Reviewer",
+        "tenant_id": "dev-tenant-001",
+        "role": "reviewer",
+    },
+    {
+        "user_id": "usr-viewer-001",
+        "email": "viewer@assurance.local",
+        "password": "Viewer123!",
+        "display_name": "Auditor & Viewer",
+        "tenant_id": "dev-tenant-001",
+        "role": "viewer",
+    },
+]
+
+def hash_password(password: str, salt: str | None = None) -> str:
+    if not salt:
+        salt = secrets.token_hex(16)
+    h = hashlib.sha256(f"{salt}:{password}".encode("utf-8")).hexdigest()
+    return f"{salt}:{h}"
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    if not stored_hash:
+        return False
+    if ":" not in stored_hash:
+        return password == stored_hash
+    salt, h = stored_hash.split(":", 1)
+    return hash_password(password, salt) == stored_hash
+
+_DEFAULT_REPO: BaseRepository | None = None
+
+def get_default_repo() -> BaseRepository:
+    global _DEFAULT_REPO
+    if _DEFAULT_REPO is None:
+        db_path = os.getenv("AGENT_ASSURANCE_DB") or str(Path(__file__).resolve().parent.parent / "agent_assurance.db")
+        _DEFAULT_REPO = SqliteRepository(db_path=db_path)
+    return _DEFAULT_REPO
+
+def set_default_repo(repo: BaseRepository) -> None:
+    global _DEFAULT_REPO
+    _DEFAULT_REPO = repo
 
 
 class BaseRepository(ABC):
@@ -119,6 +241,26 @@ class BaseRepository(ABC):
     @abstractmethod
     async def get_report_artifact(self, tenant_id: str, artifact_id: str) -> ReportArtifact | None: ...
 
+    # ─── Users & Authentication ───────────────────────────────────────
+    @abstractmethod
+    async def get_user_by_email(self, email: str) -> dict[str, Any] | None: ...
+    @abstractmethod
+    async def get_user_by_id(self, user_id: str) -> dict[str, Any] | None: ...
+    @abstractmethod
+    async def list_users(self, tenant_id: str | None = None) -> list[dict[str, Any]]: ...
+    @abstractmethod
+    async def create_user(self, user_data: dict[str, Any]) -> dict[str, Any]: ...
+    @abstractmethod
+    async def update_user(self, user_id: str, updates: dict[str, Any]) -> dict[str, Any] | None: ...
+    @abstractmethod
+    async def delete_user(self, user_id: str) -> bool: ...
+    @abstractmethod
+    async def create_session(self, user_id: str, tenant_id: str, ttl_days: int = 7) -> str: ...
+    @abstractmethod
+    async def get_session(self, session_token: str) -> dict[str, Any] | None: ...
+    @abstractmethod
+    async def delete_session(self, session_token: str) -> bool: ...
+
 
 class InMemoryRepository(BaseRepository):
     """In-memory implementation for isolated tests."""
@@ -136,6 +278,104 @@ class InMemoryRepository(BaseRepository):
         self._plans: dict[str, PricingPlan] = {}
         self._report_artifacts: dict[str, ReportArtifact] = {}
         self._idempotency_index: dict[str, str] = {}  # "tenant:assessment:key" -> run_id
+        self._users: dict[str, dict[str, Any]] = {}
+        self._sessions: dict[str, dict[str, Any]] = {}
+        self._seed_default_users()
+
+    def _seed_default_users(self) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        for u in DEFAULT_USERS:
+            perms = DEFAULT_ROLE_PERMISSIONS.get(u["role"], DEFAULT_ROLE_PERMISSIONS["viewer"])
+            self._users[u["user_id"]] = {
+                "user_id": u["user_id"],
+                "email": u["email"],
+                "password_hash": hash_password(u["password"]),
+                "display_name": u["display_name"],
+                "tenant_id": u["tenant_id"],
+                "role": u["role"],
+                "permissions": perms,
+                "is_active": True,
+                "created_at": now,
+                "updated_at": now,
+                "last_login_at": None,
+            }
+
+    # ─── Users & Authentication ───────────────────────────────────────
+    async def get_user_by_email(self, email: str) -> dict[str, Any] | None:
+        clean = email.strip().lower()
+        for u in self._users.values():
+            if u["email"].strip().lower() == clean:
+                return copy.deepcopy(u)
+        return None
+
+    async def get_user_by_id(self, user_id: str) -> dict[str, Any] | None:
+        u = self._users.get(user_id)
+        return copy.deepcopy(u) if u else None
+
+    async def list_users(self, tenant_id: str | None = None) -> list[dict[str, Any]]:
+        if tenant_id:
+            return [copy.deepcopy(u) for u in self._users.values() if u.get("tenant_id") == tenant_id]
+        return [copy.deepcopy(u) for u in self._users.values()]
+
+    async def create_user(self, user_data: dict[str, Any]) -> dict[str, Any]:
+        uid = user_data.get("user_id") or f"usr-{uuid4().hex[:8]}"
+        user = copy.deepcopy(user_data)
+        user["user_id"] = uid
+        if "permissions" not in user:
+            user["permissions"] = DEFAULT_ROLE_PERMISSIONS.get(user.get("role", "viewer"), DEFAULT_ROLE_PERMISSIONS["viewer"])
+        if "created_at" not in user:
+            user["created_at"] = datetime.now(timezone.utc).isoformat()
+        if "updated_at" not in user:
+            user["updated_at"] = user["created_at"]
+        if "is_active" not in user:
+            user["is_active"] = True
+        self._users[uid] = user
+        return copy.deepcopy(user)
+
+    async def update_user(self, user_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
+        if user_id not in self._users:
+            return None
+        u = self._users[user_id]
+        for k, v in updates.items():
+            u[k] = v
+        u["updated_at"] = datetime.now(timezone.utc).isoformat()
+        if "role" in updates:
+            u["permissions"] = DEFAULT_ROLE_PERMISSIONS.get(u["role"], DEFAULT_ROLE_PERMISSIONS["viewer"])
+        return copy.deepcopy(u)
+
+    async def delete_user(self, user_id: str) -> bool:
+        if user_id in self._users:
+            del self._users[user_id]
+            return True
+        return False
+
+    async def create_session(self, user_id: str, tenant_id: str, ttl_days: int = 7) -> str:
+        token = f"sess_{secrets.token_urlsafe(32)}"
+        now = datetime.now(timezone.utc)
+        expires = (now + timedelta(days=ttl_days)).isoformat()
+        self._sessions[token] = {
+            "session_token": token,
+            "user_id": user_id,
+            "tenant_id": tenant_id,
+            "expires_at": expires,
+            "created_at": now.isoformat(),
+        }
+        return token
+
+    async def get_session(self, session_token: str) -> dict[str, Any] | None:
+        s = self._sessions.get(session_token)
+        if not s:
+            return None
+        try:
+            if datetime.fromisoformat(s["expires_at"]) < datetime.now(timezone.utc):
+                del self._sessions[session_token]
+                return None
+        except Exception:
+            pass
+        return copy.deepcopy(s)
+
+    async def delete_session(self, session_token: str) -> bool:
+        return self._sessions.pop(session_token, None) is not None
 
     # ─── Agents ───────────────────────────────────────────────────────
     async def save_agent(self, agent: AgentManifest) -> AgentManifest:
@@ -454,7 +694,34 @@ class SqliteRepository(BaseRepository):
                         created_at TEXT NOT NULL
                     );
                     CREATE INDEX IF NOT EXISTS idx_reports_tenant ON report_artifacts(tenant_id, artifact_id);
+
+                    CREATE TABLE IF NOT EXISTS users (
+                        user_id TEXT PRIMARY KEY,
+                        email TEXT UNIQUE NOT NULL,
+                        password_hash TEXT NOT NULL,
+                        display_name TEXT NOT NULL,
+                        tenant_id TEXT NOT NULL,
+                        role TEXT NOT NULL,
+                        permissions_json TEXT NOT NULL,
+                        is_active INTEGER NOT NULL DEFAULT 1,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        last_login_at TEXT
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+                    CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id);
+
+                    CREATE TABLE IF NOT EXISTS sessions (
+                        session_token TEXT PRIMARY KEY,
+                        user_id TEXT NOT NULL,
+                        tenant_id TEXT NOT NULL,
+                        expires_at TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
                 """)
+                self._seed_default_users(conn)
                 conn.commit()
             finally:
                 conn.close()
@@ -953,5 +1220,215 @@ class SqliteRepository(BaseRepository):
                 if row:
                     return ReportArtifact.model_validate_json(row["data_json"])
                 return None
+            finally:
+                conn.close()
+
+    def _seed_default_users(self, conn: sqlite3.Connection) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        for u in DEFAULT_USERS:
+            perms = DEFAULT_ROLE_PERMISSIONS.get(u["role"], DEFAULT_ROLE_PERMISSIONS["viewer"])
+            perms_json = json.dumps(perms)
+            cursor = conn.execute("SELECT user_id FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))", (u["email"],))
+            row = cursor.fetchone()
+            if not row:
+                pwd_hash = hash_password(u["password"])
+                conn.execute(
+                    """INSERT INTO users (user_id, email, password_hash, display_name, tenant_id, role, permissions_json, is_active, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)""",
+                    (u["user_id"], u["email"], pwd_hash, u["display_name"], u["tenant_id"], u["role"], perms_json, now, now)
+                )
+            else:
+                conn.execute("UPDATE users SET permissions_json = ? WHERE user_id = ?", (perms_json, row["user_id"]))
+
+    def _row_to_user(self, row: sqlite3.Row) -> dict[str, Any]:
+        perms = []
+        try:
+            perms = json.loads(row["permissions_json"])
+        except Exception:
+            perms = DEFAULT_ROLE_PERMISSIONS.get(row["role"], [])
+        return {
+            "user_id": row["user_id"],
+            "email": row["email"],
+            "password_hash": row["password_hash"],
+            "display_name": row["display_name"],
+            "tenant_id": row["tenant_id"],
+            "role": row["role"],
+            "permissions": perms,
+            "is_active": bool(row["is_active"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "last_login_at": row["last_login_at"],
+        }
+
+    # ─── Users & Authentication ───────────────────────────────────────
+    async def get_user_by_email(self, email: str) -> dict[str, Any] | None:
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                cursor = conn.execute(
+                    "SELECT * FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))",
+                    (email.strip(),),
+                )
+                row = cursor.fetchone()
+                return self._row_to_user(row) if row else None
+            finally:
+                conn.close()
+
+    async def get_user_by_id(self, user_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                cursor = conn.execute(
+                    "SELECT * FROM users WHERE user_id = ?",
+                    (user_id,),
+                )
+                row = cursor.fetchone()
+                return self._row_to_user(row) if row else None
+            finally:
+                conn.close()
+
+    async def list_users(self, tenant_id: str | None = None) -> list[dict[str, Any]]:
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                if tenant_id:
+                    cursor = conn.execute(
+                        "SELECT * FROM users WHERE tenant_id = ? ORDER BY created_at ASC",
+                        (tenant_id,),
+                    )
+                else:
+                    cursor = conn.execute("SELECT * FROM users ORDER BY created_at ASC")
+                return [self._row_to_user(r) for r in cursor.fetchall()]
+            finally:
+                conn.close()
+
+    async def create_user(self, user_data: dict[str, Any]) -> dict[str, Any]:
+        uid = user_data.get("user_id") or f"usr-{uuid4().hex[:8]}"
+        email = user_data["email"].strip().lower()
+        raw_pwd = user_data.get("password")
+        pwd_hash = user_data.get("password_hash") or (hash_password(raw_pwd) if raw_pwd else "")
+        display_name = user_data.get("display_name") or email.split("@")[0].capitalize()
+        tenant_id = user_data.get("tenant_id", "dev-tenant-001")
+        role = user_data.get("role", "viewer")
+        perms = user_data.get("permissions") or DEFAULT_ROLE_PERMISSIONS.get(role, DEFAULT_ROLE_PERMISSIONS["viewer"])
+        perms_json = json.dumps(perms)
+        now = datetime.now(timezone.utc).isoformat()
+        is_active = 1 if user_data.get("is_active", True) else 0
+
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                conn.execute(
+                    """INSERT OR REPLACE INTO users (user_id, email, password_hash, display_name, tenant_id, role, permissions_json, is_active, created_at, updated_at, last_login_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (uid, email, pwd_hash, display_name, tenant_id, role, perms_json, is_active, now, now, None),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+        return {
+            "user_id": uid,
+            "email": email,
+            "password_hash": pwd_hash,
+            "display_name": display_name,
+            "tenant_id": tenant_id,
+            "role": role,
+            "permissions": perms,
+            "is_active": bool(is_active),
+            "created_at": now,
+            "updated_at": now,
+            "last_login_at": None,
+        }
+
+    async def update_user(self, user_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
+        user = await self.get_user_by_id(user_id)
+        if not user:
+            return None
+
+        role = updates.get("role", user["role"])
+        perms = updates.get("permissions")
+        if not perms and "role" in updates:
+            perms = DEFAULT_ROLE_PERMISSIONS.get(role, user["permissions"])
+        else:
+            perms = perms or user["permissions"]
+
+        display_name = updates.get("display_name", user["display_name"])
+        raw_pwd = updates.get("password")
+        pwd_hash = hash_password(raw_pwd) if raw_pwd else updates.get("password_hash", user["password_hash"])
+        is_active = 1 if updates.get("is_active", user["is_active"]) else 0
+        last_login = updates.get("last_login_at", user.get("last_login_at"))
+        now = datetime.now(timezone.utc).isoformat()
+
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                conn.execute(
+                    """UPDATE users SET display_name = ?, password_hash = ?, role = ?, permissions_json = ?, is_active = ?, updated_at = ?, last_login_at = ?
+                       WHERE user_id = ?""",
+                    (display_name, pwd_hash, role, json.dumps(perms), is_active, now, last_login, user_id),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+        return await self.get_user_by_id(user_id)
+
+    async def delete_user(self, user_id: str) -> bool:
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                cursor = conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+                conn.commit()
+                return cursor.rowcount > 0
+            finally:
+                conn.close()
+
+    async def create_session(self, user_id: str, tenant_id: str, ttl_days: int = 7) -> str:
+        token = f"sess_{secrets.token_urlsafe(32)}"
+        now = datetime.now(timezone.utc)
+        expires = (now + timedelta(days=ttl_days)).isoformat()
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                conn.execute(
+                    """INSERT INTO sessions (session_token, user_id, tenant_id, expires_at, created_at)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (token, user_id, tenant_id, expires, now.isoformat()),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        return token
+
+    async def get_session(self, session_token: str) -> dict[str, Any] | None:
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                now_str = datetime.now(timezone.utc).isoformat()
+                cursor = conn.execute(
+                    "SELECT * FROM sessions WHERE session_token = ? AND expires_at > ?",
+                    (session_token, now_str),
+                )
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        "session_token": row["session_token"],
+                        "user_id": row["user_id"],
+                        "tenant_id": row["tenant_id"],
+                        "expires_at": row["expires_at"],
+                        "created_at": row["created_at"],
+                    }
+                return None
+            finally:
+                conn.close()
+
+    async def delete_session(self, session_token: str) -> bool:
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                cursor = conn.execute("DELETE FROM sessions WHERE session_token = ?", (session_token,))
+                conn.commit()
+                return cursor.rowcount > 0
             finally:
                 conn.close()
