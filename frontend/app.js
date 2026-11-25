@@ -38,7 +38,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   await checkApiHealth();
-  await refreshAllData();
+  if (!window.Auth || window.Auth.isSignedIn()) {
+    await refreshAllData();
+  }
 
   // Signing in again (after an expired session) must reload tenant data.
   document.addEventListener('auth:signed-in', async () => {
@@ -643,9 +645,22 @@ async function executePlaygroundScan() {
       body: JSON.stringify(payload),
     });
 
+    const errBanner = document.getElementById('pg-error-banner');
+    if (errBanner) errBanner.classList.add('hidden');
+
     if (!res.ok) {
       const err = await res.json().catch(() => ({ message: `Server returned HTTP ${res.status}` }));
-      throw new Error(err.message || `Testing failed with HTTP ${res.status}`);
+      const msg = err.message || err.detail || `Testing failed with HTTP ${res.status}`;
+      if (errBanner) {
+        const titleEl = document.getElementById('pg-error-title');
+        const msgEl = document.getElementById('pg-error-msg');
+        if (titleEl) titleEl.textContent = err.code === 'AGENT_UNREACHABLE' ? 'No Agent Running on Target Port' : 'Agent Evaluation Error';
+        if (msgEl) msgEl.textContent = msg;
+        errBanner.classList.remove('hidden');
+      }
+      const resSec = document.getElementById('pg-results-section');
+      if (resSec) resSec.classList.add('hidden');
+      throw new Error(msg);
     }
 
     const data = await res.json();
@@ -655,8 +670,11 @@ async function executePlaygroundScan() {
 
     // Friendly notification
     const isPassed = data.overall_verdict === 'PASSED';
+    const isInconclusive = data.overall_verdict === 'INCONCLUSIVE';
     showToast(
-      isPassed ? '✓ All safety checks passed!' : '⚠️ Potential safety issues detected.',
+      isPassed
+        ? '✓ All safety checks passed!'
+        : (isInconclusive ? '⚠️ Evaluation inconclusive — check rejection reasons below.' : '⚠️ Potential safety issues detected.'),
       isPassed ? 'success' : 'error'
     );
 
@@ -731,7 +749,10 @@ function renderPlaygroundResults(data) {
 
   const summary = data.summary || {};
   const violations = summary.violations_detected || 0;
+  const inconclusiveCount = summary.inconclusive || 0;
+  const passedCount = summary.rules_passed || 0;
   const isViolation = violations > 0;
+  const isInconclusive = !isViolation && (data.overall_verdict === 'INCONCLUSIVE' || inconclusiveCount > 0);
 
   const banner = document.getElementById('pg-verdict-banner');
   const icon = document.getElementById('pg-verdict-big-icon');
@@ -746,6 +767,12 @@ function renderPlaygroundResults(data) {
     eyebrow.textContent = 'ATTENTION RECOMMENDED';
     headline.textContent = `${violations} Safety Issue${violations > 1 ? 's' : ''} Detected`;
     subtext.textContent = 'The agent executed sensitive tools without gating, yielded to external instructions, or leaked test data.';
+  } else if (isInconclusive) {
+    banner.className = 'verdict-banner banner-inconclusive';
+    icon.innerHTML = '❓';
+    eyebrow.textContent = 'EVALUATION INCONCLUSIVE';
+    headline.textContent = `${inconclusiveCount} Check${inconclusiveCount !== 1 ? 's' : ''} Could Not Be Verified`;
+    subtext.textContent = 'The target agent rejected requests, timed out, or did not return required telemetry. See each card below for the exact rejection reason.';
   } else {
     banner.className = 'verdict-banner banner-pass';
     icon.innerHTML = '✓';
@@ -760,7 +787,11 @@ function renderPlaygroundResults(data) {
       <span class="pill-name">Issues</span>
     </div>
     <div class="stat-pill-box">
-      <span class="pill-number" style="color: var(--accent-green);">${summary.rules_passed || 0}</span>
+      <span class="pill-number" style="color: var(--accent-amber, #f59e0b);">${inconclusiveCount}</span>
+      <span class="pill-name">Inconclusive</span>
+    </div>
+    <div class="stat-pill-box">
+      <span class="pill-number" style="color: var(--accent-green);">${passedCount}</span>
       <span class="pill-name">Passed</span>
     </div>
     <div class="stat-pill-box">
@@ -789,7 +820,9 @@ function renderPlaygroundResults(data) {
 
   document.getElementById('pg-count-all').textContent = summary.total_rules_evaluated || 12;
   document.getElementById('pg-count-violations').textContent = violations;
-  document.getElementById('pg-count-passed').textContent = summary.rules_passed || 0;
+  const inconEl = document.getElementById('pg-count-inconclusive');
+  if (inconEl) inconEl.textContent = inconclusiveCount;
+  document.getElementById('pg-count-passed').textContent = passedCount;
 
   renderPlaygroundRuleCards(data.rules || []);
 }
@@ -801,6 +834,8 @@ function renderPlaygroundRuleCards(rules) {
   let filtered = rules;
   if (playgroundFilter === 'fail') {
     filtered = rules.filter(r => r.status === 'NEEDS ATTENTION' || r.status === 'VIOLATION DETECTED');
+  } else if (playgroundFilter === 'inconclusive') {
+    filtered = rules.filter(r => r.status === 'INCONCLUSIVE');
   } else if (playgroundFilter === 'pass') {
     filtered = rules.filter(r => r.status === 'PASSED');
   }
@@ -812,7 +847,13 @@ function renderPlaygroundRuleCards(rules) {
 
   container.innerHTML = filtered.map(r => {
     const isFail = r.status === 'NEEDS ATTENTION' || r.status === 'VIOLATION DETECTED';
+    const isInconclusive = r.status === 'INCONCLUSIVE';
     const isPass = r.status === 'PASSED';
+
+    const cardClass = isFail ? 'rule-card-fail' : (isInconclusive ? 'rule-card-inconclusive' : 'rule-card-pass');
+    const chipClass = isFail ? 'chip-fail' : (isInconclusive ? 'chip-running' : 'chip-pass');
+    const chipLabel = isFail ? '⚠️ Needs Attention' : (isInconclusive ? '❓ Inconclusive / Rejected' : '✓ Passed');
+    const reasonText = r.rejection_reason || r.violation_evidence || r.summary || '';
 
     const toolsList = (r.tool_events || []).map(t => {
       const argsStr = t.arguments ? Object.entries(t.arguments).map(([k, v]) => `${k}=${v}`).join(', ') : '';
@@ -820,10 +861,10 @@ function renderPlaygroundRuleCards(rules) {
     }).join('');
 
     return `
-      <div class="rule-card ${isFail ? 'rule-card-fail' : 'rule-card-pass'}">
+      <div class="rule-card ${cardClass}">
         <div class="rule-card-top">
           <div class="rule-title-group">
-            <span class="status-chip ${isFail ? 'chip-fail' : 'chip-pass'}">${isFail ? '⚠️ Needs Attention' : '✓ Passed'}</span>
+            <span class="status-chip ${chipClass}">${chipLabel}</span>
             <span class="severity-pill severity-${(r.severity || 'medium').toLowerCase()}">${(r.severity || 'MED').toUpperCase()}</span>
             <h4>${escapeHtml(r.rule_name || r.scenario_id)}</h4>
           </div>
@@ -836,44 +877,56 @@ function renderPlaygroundRuleCards(rules) {
         ${isFail ? `
           <div class="violation-box">
             <div class="violation-badge-row">
-              <span class="violation-badge">🚨 VIOLATION AT: ${escapeHtml(r.violation_location || 'Execution Policy')}</span>
+              <span class="violation-badge">🚨 REJECTED AT: ${escapeHtml(r.violation_location || 'Execution Policy')}</span>
             </div>
             <div class="violation-evidence-text">
-              <strong>Violation Proof:</strong> ${escapeHtml(r.violation_evidence || r.summary)}
+              <strong>Rejection Reason:</strong> ${escapeHtml(reasonText)}
             </div>
           </div>
-        ` : ''}
+        ` : (isInconclusive ? `
+          <div class="inconclusive-box">
+            <div class="violation-badge-row">
+              <span class="inconclusive-badge">⚠️ COULD NOT VERIFY: ${escapeHtml(r.violation_location || 'Endpoint / Telemetry')}</span>
+            </div>
+            <div class="violation-evidence-text">
+              <strong>Rejection / Failure Reason:</strong> ${escapeHtml(reasonText)}
+            </div>
+          </div>
+        ` : '')
+  }
 
-        <!-- Concrete Evidence Preview: Input Sent & Output Collected -->
-        <div class="evidence-preview-container">
-          <div class="evidence-row">
-            <span class="evidence-label">User Prompt Sent:</span>
-            <span class="evidence-val">"${escapeHtml(r.prompt || r.trace?.input_prompt || '')}"</span>
-          </div>
-          <div class="evidence-row">
-            <span class="evidence-label">Agent Output Collected:</span>
-            <span class="evidence-val">"${escapeHtml(r.agent_output || r.trace?.output_excerpt || '(No response text)')}"</span>
-          </div>
-          ${toolsList ? `
+        < !--Concrete Evidence Preview: Input Sent & Output Collected-- >
+  <div class="evidence-preview-container">
+    <div class="evidence-row">
+      <span class="evidence-label">User Prompt Sent:</span>
+      <span class="evidence-val">"${escapeHtml(r.prompt || r.trace?.input_prompt || '')}"</span>
+    </div>
+    <div class="evidence-row">
+      <span class="evidence-label">Agent Output Collected:</span>
+      <span class="evidence-val">"${escapeHtml(r.agent_output || r.trace?.output_excerpt || '(No response text)')}"</span>
+    </div>
+    ${toolsList ? `
             <div class="evidence-row">
               <span class="evidence-label">Tool Calls Recorded:</span>
               <div>${toolsList}</div>
             </div>
           ` : ''}
-        </div>
+  </div>
 
-        ${r.checks_failed && r.checks_failed.length > 0 ? `
+        ${
+    r.checks_failed && r.checks_failed.length > 0 ? `
           <div class="violations-callout">
             <strong>Failed Check Outcomes:</strong>
             <ul>${r.checks_failed.map(c => `<li><code>${escapeHtml(c)}</code></li>`).join('')}</ul>
           </div>
-        ` : ''}
-        <div class="rule-card-footer">
-          <span>Category: <em>${escapeHtml(r.category || 'General')}</em></span>
-          ${isFail ? `<span class="remediation-hint">💡 ${escapeHtml(r.remediation || 'Review agent instructions and permissions.')}</span>` : '<span style="color: var(--accent-green);">✓ All boundaries satisfied</span>'}
-        </div>
-      </div>
-    `;
+        ` : ''
+  }
+  < div class= "rule-card-footer" >
+  <span>Category: <em>${escapeHtml(r.category || 'General')}</em></span>
+          ${ isFail? `<span class="remediation-hint">💡 ${escapeHtml(r.remediation || 'Review agent instructions and permissions.')}</span>` : '<span style="color: var(--accent-green);">✓ All boundaries satisfied</span>'}
+        </div >
+      </div >
+  `;
   }).join('');
 }
 
@@ -887,7 +940,7 @@ function downloadPlaygroundJsonReport() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `agent-assurance-report-${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `agent - assurance - report - ${ new Date().toISOString().slice(0, 10) }.json`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -903,7 +956,7 @@ window.openEvidenceTrace = (scenarioId, title) => {
     if (ruleObj) traceData = ruleObj.trace || {};
   }
 
-  document.getElementById('evidence-modal-title').textContent = title || `Diagnostic Details: ${scenarioId}`;
+  document.getElementById('evidence-modal-title').textContent = title || `Diagnostic Details: ${ scenarioId } `;
   document.getElementById('evidence-modal-scenario').textContent = scenarioId;
 
   const visualContainer = document.getElementById('evidence-modal-visual');
@@ -912,22 +965,23 @@ window.openEvidenceTrace = (scenarioId, title) => {
     const assertions = traceData.state_assertions || {};
     const assertionsList = Object.entries(assertions).map(([k, v]) => {
       const isFailed = (traceData.failed_assertions || []).includes(k);
-      return `<div>&bull; <code>${escapeHtml(k)}</code>: <span style="font-weight: 600; color: ${isFailed ? 'var(--accent-red)' : 'var(--accent-green)'};">${v}</span> ${isFailed ? '(Violation)' : '(Passed)'}</div>`;
+      return `< div >& bull; <code>${escapeHtml(k)}</code>: <span style="font-weight: 600; color: ${isFailed ? 'var(--accent-red)' : 'var(--accent-green)'};">${v}</span> ${ isFailed ? '(Violation)' : '(Passed)' }</div > `;
     }).join('');
 
     const toolsFormatted = (traceData.tool_events || []).map(t => {
       const a = t.arguments ? JSON.stringify(t.arguments) : '{}';
-      return `<div style="background: rgba(0,0,0,0.3); border-radius: var(--radius-xs); padding: 6px 10px; margin-top: 4px; font-family: monospace; font-size: 0.76rem;"><strong>${escapeHtml(t.tool)}</strong>: ${escapeHtml(a)}</div>`;
+      return `< div style = "background: rgba(0,0,0,0.3); border-radius: var(--radius-xs); padding: 6px 10px; margin-top: 4px; font-family: monospace; font-size: 0.76rem;" > <strong>${escapeHtml(t.tool)}</strong>: ${ escapeHtml(a) }</div > `;
     }).join('');
 
     visualContainer.innerHTML = `
-      <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 12px;">
+  < div style = "display: flex; gap: 10px; align-items: center; margin-bottom: 12px;" >
         <span class="status-chip ${isFail ? 'chip-fail' : 'chip-pass'}">${isFail ? '⚠️ Violation Detected' : '✓ Passed'}</span>
         <span class="severity-pill severity-${(ruleObj.severity || 'med').toLowerCase()}">${(ruleObj.severity || 'MED').toUpperCase()}</span>
         <span style="font-size: 0.8rem; color: var(--text-muted);">Category: ${escapeHtml(ruleObj.category || 'General')}</span>
-      </div>
+      </div >
 
-      ${isFail ? `
+  ${
+    isFail ? `
         <div style="background: rgba(244,63,94,0.12); border: 1px solid rgba(244,63,94,0.3); border-left: 4px solid var(--accent-red); padding: 12px; border-radius: var(--radius-sm); margin-bottom: 14px;">
           <div style="font-weight: 700; color: #fb7185; font-size: 0.75rem; text-transform: uppercase;">
             📍 Violation Location: ${escapeHtml(ruleObj.violation_location || traceData.violation_location || 'Execution Behavior')}
@@ -945,7 +999,7 @@ window.openEvidenceTrace = (scenarioId, title) => {
         </div>
       `}
 
-      <!-- Conversation Evidence: Input Sent vs Output Collected -->
+      < !--Conversation Evidence: Input Sent vs Output Collected-- >
       <div style="background: var(--bg-card-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 12px; margin-bottom: 12px;">
         <h5 style="color: var(--text-muted); font-size: 0.72rem; text-transform: uppercase; margin-bottom: 4px;">User Test Input (Prompt Sent):</h5>
         <div style="background: rgba(0,0,0,0.25); padding: 8px; border-radius: var(--radius-xs); font-size: 0.82rem; color: var(--text-primary); margin-bottom: 10px;">
@@ -958,23 +1012,23 @@ window.openEvidenceTrace = (scenarioId, title) => {
         </div>
       </div>
 
-      <!-- State Assertions & Tool Events Grid -->
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
-        <div style="background: var(--bg-card-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px;">
-          <h5 style="color: var(--text-muted); font-size: 0.72rem; text-transform: uppercase; margin-bottom: 6px;">State Assertions Evaluated:</h5>
-          <div style="font-size: 0.76rem; color: var(--text-secondary); line-height: 1.5;">
-            ${assertionsList || '<em>No state assertions defined</em>'}
-          </div>
-        </div>
-
-        <div style="background: var(--bg-card-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px;">
-          <h5 style="color: var(--text-muted); font-size: 0.72rem; text-transform: uppercase; margin-bottom: 6px;">Tool Invocations Recorded:</h5>
-          <div style="font-size: 0.76rem; color: var(--text-secondary);">
-            ${toolsFormatted || '<em>None (No tool calls executed)</em>'}
-          </div>
-        </div>
+      <!--State Assertions & Tool Events Grid-- >
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+    <div style="background: var(--bg-card-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px;">
+      <h5 style="color: var(--text-muted); font-size: 0.72rem; text-transform: uppercase; margin-bottom: 6px;">State Assertions Evaluated:</h5>
+      <div style="font-size: 0.76rem; color: var(--text-secondary); line-height: 1.5;">
+        ${assertionsList || '<em>No state assertions defined</em>'}
       </div>
-    `;
+    </div>
+
+    <div style="background: var(--bg-card-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px;">
+      <h5 style="color: var(--text-muted); font-size: 0.72rem; text-transform: uppercase; margin-bottom: 6px;">Tool Invocations Recorded:</h5>
+      <div style="font-size: 0.76rem; color: var(--text-secondary);">
+        ${toolsFormatted || '<em>None (No tool calls executed)</em>'}
+      </div>
+    </div>
+  </div>
+`;
   }
 
   document.getElementById('evidence-modal-code').textContent = JSON.stringify(traceData, null, 2);
@@ -987,7 +1041,7 @@ window.openEvidenceTrace = (scenarioId, title) => {
 
 async function loadAgents() {
   try {
-    const res = await fetch(`${API_BASE}/v1/agents`);
+    const res = await fetch(`${ API_BASE } /v1/agents`);
     if (!res.ok) return;
     registeredAgents = await res.json();
 
@@ -1008,7 +1062,7 @@ function renderSidebarAgents(agents) {
   if (!container) return;
 
   if (agents.length === 0) {
-    container.innerHTML = `<div class="sidebar-empty-hint">No agents saved in .db file yet.</div>`;
+    container.innerHTML = `< div class="sidebar-empty-hint" > No agents saved in .db file yet.</div > `;
     return;
   }
 
@@ -1016,11 +1070,11 @@ function renderSidebarAgents(agents) {
     const isHttp = a.adapter_type === 'http';
     const icon = isHttp ? '🌐' : '⚡';
     return `
-      <button type="button" class="nav-item project-link" data-agent-id="${a.agent_id}" onclick="launchTestForAgent('${a.agent_id}')" title="Test ${escapeHtml(a.name)}">
+  < button type = "button" class="nav-item project-link" data - agent - id="${a.agent_id}" onclick = "launchTestForAgent('${a.agent_id}')" title = "Test ${escapeHtml(a.name)}" >
         <span class="project-symbol">${icon}</span>
         <span>${escapeHtml(a.name)}</span>
-      </button>
-    `;
+      </button >
+  `;
   }).join('');
 }
 
@@ -1030,18 +1084,18 @@ function renderAgentsGrid(agents) {
 
   if (agents.length === 0) {
     container.innerHTML = `
-      <div class="card" style="grid-column: 1 / -1; color: var(--text-muted); padding: 36px; text-align: center;">
+  < div class="card" style = "grid-column: 1 / -1; color: var(--text-muted); padding: 36px; text-align: center;" >
         <p style="font-size: 1rem; margin-bottom: 8px;">No agents saved in database (.db) yet.</p>
         <p style="font-size: 0.85rem; color: var(--text-secondary);">Click '+ Register New Agent' or test any URL in the Playground to save one.</p>
-      </div>
-    `;
+      </div >
+  `;
     return;
   }
 
   container.innerHTML = agents.map(a => {
     const isHttp = a.adapter_type === 'http';
     return `
-      <div class="agent-card">
+  < div class="agent-card" >
         <div class="agent-card-title">${escapeHtml(a.name)}</div>
         <p class="agent-scope-text">${escapeHtml(a.description || a.scope_description || 'Authorized evaluation target')}</p>
         <div class="agent-meta-tags">
@@ -1058,8 +1112,8 @@ function renderAgentsGrid(agents) {
             🗑 Delete
           </button>
         </div>
-      </div>
-    `;
+      </div >
+  `;
   }).join('');
 }
 
@@ -1073,21 +1127,21 @@ window.launchTestForAgent = (agentId) => {
   if (urlInput) {
     if (agent.endpoint_url) {
       urlInput.value = agent.endpoint_url;
-      urlInput.placeholder = `Testing ${agent.name}`;
+      urlInput.placeholder = `Testing ${ agent.name } `;
     } else {
       urlInput.value = '';
-      urlInput.placeholder = `Testing Registered Agent: ${agent.name}`;
+      urlInput.placeholder = `Testing Registered Agent: ${ agent.name } `;
     }
   }
-  showToast(`Loaded ${agent.name} into Playground`, 'info');
+  showToast(`Loaded ${ agent.name } into Playground`, 'info');
 };
 
 window.deleteAgentFromDatabase = async (agentId, agentName) => {
-  if (!confirm(`Are you sure you want to delete '${agentName}' from the database?`)) {
+  if (!confirm(`Are you sure you want to delete '${agentName}' from the database ? `)) {
     return;
   }
   try {
-    const res = await fetch(`${API_BASE}/v1/agents/${agentId}`, {
+    const res = await fetch(`${ API_BASE } /v1/agents / ${ agentId } `, {
       method: 'DELETE',
     });
     if (!res.ok) throw new Error('Delete failed');
@@ -1100,7 +1154,7 @@ window.deleteAgentFromDatabase = async (agentId, agentName) => {
 
 async function loadAssessments() {
   try {
-    const res = await fetch(`${API_BASE}/v1/assessments`);
+    const res = await fetch(`${ API_BASE } /v1/assessments`);
     if (!res.ok) return;
     registeredAssessments = await res.json();
     renderAssessmentsTable(registeredAssessments);
@@ -1115,12 +1169,12 @@ function renderAssessmentsTable(assessments) {
   if (!tbody) return;
 
   if (assessments.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="6" class="text-center" style="padding: 24px; color: var(--text-muted);">No assessment templates configured yet.</td></tr>`;
+    tbody.innerHTML = `< tr > <td colspan="6" class="text-center" style="padding: 24px; color: var(--text-muted);">No assessment templates configured yet.</td></tr > `;
     return;
   }
 
   tbody.innerHTML = assessments.map(a => `
-    <tr>
+  < tr >
       <td><strong>${escapeHtml(a.title)}</strong></td>
       <td><code>${a.agent_id ? a.agent_id.substring(0, 10) + '...' : 'Target Agent'}</code></td>
       <td><span class="meta-chip font-mono">${escapeHtml((a.scope_hash || 'SHA-256').substring(0, 12))}...</span></td>
@@ -1131,7 +1185,7 @@ function renderAssessmentsTable(assessments) {
           Start Run
         </button>
       </td>
-    </tr>
+    </tr >
   `).join('');
 }
 
@@ -1147,7 +1201,7 @@ window.openDispatchModalWithAssessment = (assessmentId) => {
 
 async function loadAuditEvents() {
   try {
-    const res = await fetch(`${API_BASE}/v1/audit-events`);
+    const res = await fetch(`${ API_BASE } /v1/audit - events`);
     if (!res.ok) return;
     const events = await res.json();
     renderAuditTable(events);
@@ -1161,19 +1215,19 @@ function renderAuditTable(events) {
   if (!tbody) return;
 
   if (!events || events.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="6" class="text-center" style="padding: 24px; color: var(--text-muted);">No activity recorded yet.</td></tr>`;
+    tbody.innerHTML = `< tr > <td colspan="6" class="text-center" style="padding: 24px; color: var(--text-muted);">No activity recorded yet.</td></tr > `;
     return;
   }
 
   tbody.innerHTML = events.slice().reverse().map(e => `
-    <tr>
+  < tr >
       <td style="color: var(--text-muted); font-size: 0.76rem;">${new Date(e.timestamp).toLocaleTimeString()}</td>
       <td><strong>${escapeHtml(e.actor_email || e.actor_id)}</strong></td>
       <td><span class="meta-chip">${escapeHtml(e.action)}</span></td>
       <td>${escapeHtml(e.resource_type)}</td>
       <td><code>${(e.resource_id || '').substring(0, 10)}...</code></td>
       <td style="color: var(--text-muted); font-size: 0.74rem;">${(e.correlation_id || '').substring(0, 8)}</td>
-    </tr>
+    </tr >
   `).join('');
 }
 
@@ -1184,18 +1238,20 @@ function renderAuditTable(events) {
 async function loadBilling() {
   try {
     const [usageRes, plansRes] = await Promise.all([
-      fetch(`${API_BASE}/v1/usage`),
-      fetch(`${API_BASE}/v1/plans`),
+      fetch(`${ API_BASE } /v1/usage`),
+      fetch(`${ API_BASE } /v1/plans`),
     ]);
 
+    let activePlanId = null;
     if (usageRes.ok) {
       const usage = await usageRes.json();
+      activePlanId = usage.plan_id;
       renderUsageBoxes(usage);
     }
 
     if (plansRes.ok) {
       const plans = await plansRes.json();
-      renderPlansTable(plans);
+      renderPlansTable(plans, activePlanId);
     }
   } catch (err) {
     console.warn('Billing load error:', err);
@@ -1209,43 +1265,81 @@ function renderUsageBoxes(usage) {
   const agentPct = Math.min(100, Math.round(((usage.agents_count || 1) / (usage.agents_limit || 25)) * 100));
   const runPct = Math.min(100, Math.round(((usage.runs_count || 2) / (usage.runs_limit || 100)) * 100));
   const scenPct = Math.min(100, Math.round(((usage.scenarios_used || 12) / (usage.scenarios_limit || 1000)) * 100));
+  const planPriceFormatted = usage.base_amount_minor ? `£${ (usage.base_amount_minor / 100).toFixed(2) } ` : '';
+  const intervalLabel = usage.billing_interval ? ` / ${ usage.billing_interval } ` : '';
 
   container.innerHTML = `
+  < div class="usage-box" >
+      <div class="usage-box-title">Active Plan</div>
+      <div class="usage-box-num" style="font-size: 1.25rem;">${escapeHtml(usage.plan_name || usage.plan_id || 'Starter')}</div>
+      <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;">
+        <span class="status-chip chip-pass" style="font-size: 0.72rem;">ACTIVE</span> ${planPriceFormatted}${intervalLabel}
+      </div>
+    </div >
     <div class="usage-box">
       <div class="usage-box-title">Agents Registered</div>
-      <div class="usage-box-num">${usage.agents_count || 3} / ${usage.agents_limit || 25}</div>
+      <div class="usage-box-num">${usage.agents_count || 0} / ${usage.agents_limit || 25}</div>
       <div class="progress-bar-bg"><div class="progress-bar-fill" style="width: ${agentPct}%;"></div></div>
     </div>
     <div class="usage-box">
       <div class="usage-box-title">Assessment Runs</div>
-      <div class="usage-box-num">${usage.runs_count || 2} / ${usage.runs_limit || 100}</div>
+      <div class="usage-box-num">${usage.runs_count || 0} / ${usage.runs_limit || 100}</div>
       <div class="progress-bar-bg"><div class="progress-bar-fill" style="width: ${runPct}%;"></div></div>
     </div>
     <div class="usage-box">
       <div class="usage-box-title">Scenarios Evaluated</div>
-      <div class="usage-box-num">${usage.scenarios_used || 12} / ${usage.scenarios_limit || 1000}</div>
+      <div class="usage-box-num">${usage.scenarios_used || 0} / ${usage.scenarios_limit || 1000}</div>
       <div class="progress-bar-bg"><div class="progress-bar-fill" style="width: ${scenPct}%;"></div></div>
     </div>
-  `;
+`;
 }
 
-function renderPlansTable(plans) {
+function renderPlansTable(plans, activePlanId) {
   const tbody = document.getElementById('plans-table-body');
   if (!tbody) return;
 
-  tbody.innerHTML = plans.map(p => `
-    <tr>
-      <td><strong>${escapeHtml(p.name)}</strong></td>
-      <td>£${((p.base_amount_minor || 0) / 100).toFixed(2)}</td>
-      <td><span class="meta-chip">${p.billing_interval}</span></td>
-      <td>${p.included_agents}</td>
-      <td>${p.maximum_runs}</td>
-      <td>${p.included_scenarios}</td>
-      <td>${p.retention_days} days</td>
-      <td><span class="status-chip chip-pass">${p.active ? 'ACTIVE' : 'INACTIVE'}</span></td>
-    </tr>
-  `).join('');
+  const canManage = window.Auth && (window.Auth.has('plans:manage') || window.Auth.has('plans:write'));
+
+  tbody.innerHTML = plans.map(p => {
+    const isCurrent = p.plan_id === activePlanId;
+    const actionCell = isCurrent
+      ? '<span class="status-chip chip-pass">CURRENT PLAN</span>'
+      : (canManage
+          ? `< button type = "button" class="btn-table-action" onclick = "window.switchPlan('${p.plan_id}', '${escapeHtml(p.name)}')" > Activate Plan</button > `
+          : '<span class="status-chip chip-neutral">Available</span>');
+
+    return `
+  < tr class="${isCurrent ? 'row-current-plan' : ''}" >
+        <td><strong>${escapeHtml(p.name)}</strong>${isCurrent ? ' <span class="meta-chip chip-info" style="margin-left: 6px;">Active</span>' : ''}</td>
+        <td>£${((p.base_amount_minor || 0) / 100).toFixed(2)}</td>
+        <td><span class="meta-chip">${p.billing_interval}</span></td>
+        <td>${p.included_agents}</td>
+        <td>${p.maximum_runs}</td>
+        <td>${p.included_scenarios}</td>
+        <td>${p.retention_days} days</td>
+        <td><span class="status-chip ${p.active ? 'chip-pass' : 'chip-fail'}">${p.active ? 'ACTIVE' : 'INACTIVE'}</span></td>
+        <td class="text-right">${actionCell}</td>
+      </tr >
+  `;
+  }).join('');
 }
+
+window.switchPlan = async function(planId, planName) {
+  try {
+    const res = await fetch(`${ API_BASE } /v1/usage / plan / ${ encodeURIComponent(planId) } `, {
+      method: 'PUT',
+      credentials: 'include',
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || err.detail || 'Failed to switch plan');
+    }
+    showToast(`✓ Successfully activated plan: ${ planName } `, 'success');
+    await loadBilling();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+};
 
 function setupKillSwitch() {
   const btnToggle = document.getElementById('btn-toggle-kill-switch');
@@ -1266,7 +1360,7 @@ function setupKillSwitch() {
 
   async function refreshKillSwitch() {
     try {
-      const res = await fetch(`${API_BASE}/v1/kill-switch`);
+      const res = await fetch(`${ API_BASE } /v1/kill -switch`);
       if (!res.ok) return; // 401 before the session exists: keep the last known state
       applyStatus(await res.json());
     } catch (err) {
@@ -1274,12 +1368,13 @@ function setupKillSwitch() {
     }
   }
 
-  refreshKillSwitch();
   document.addEventListener('auth:signed-in', refreshKillSwitch);
   // Restored sessions resolve the principal after load; re-read then so a tenant-scoped
   // pause is reflected without a manual refresh.
   if (window.AuthGateReady && typeof window.AuthGateReady.then === 'function') {
-    window.AuthGateReady.then(refreshKillSwitch).catch(() => { });
+    window.AuthGateReady.then(() => {
+      if (!window.Auth || window.Auth.isSignedIn()) refreshKillSwitch();
+    }).catch(() => { });
   }
 
   btnToggle.addEventListener('click', async () => {
@@ -1287,7 +1382,7 @@ function setupKillSwitch() {
     const nextState = !killSwitchEngaged;
 
     try {
-      const res = await fetch(`${API_BASE}/v1/kill-switch`, {
+      const res = await fetch(`${ API_BASE } /v1/kill -switch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: nextState, reason: reason }),
@@ -1298,7 +1393,7 @@ function setupKillSwitch() {
         throw new Error(data.message || 'You do not have permission to change this control.');
       }
       applyStatus(data);
-      showToast(`Testing ${killSwitchEngaged ? 'PAUSED' : 'RESUMED'} successfully`, killSwitchEngaged ? 'error' : 'success');
+      showToast(`Testing ${ killSwitchEngaged ? 'PAUSED' : 'RESUMED' } successfully`, killSwitchEngaged ? 'error' : 'success');
       reasonInput.value = '';
     } catch (err) {
       showToast(err.message, 'error');
@@ -1322,7 +1417,7 @@ function setupKillSwitch() {
   // Demo Seed Button
   document.getElementById('btn-trigger-seed').addEventListener('click', async () => {
     try {
-      const res = await fetch(`${API_BASE}/v1/demo/seed`, { method: 'POST' });
+      const res = await fetch(`${ API_BASE } /v1/demo / seed`, { method: 'POST' });
       if (res.ok) {
         showToast('Sample workspace data loaded successfully!', 'success');
         await refreshAllData();
@@ -1346,7 +1441,7 @@ function setupMockAgentHarness() {
     try {
       btn.disabled = true;
       btn.textContent = 'Sending...';
-      const res = await fetch(`${API_BASE}/v1/agent/run?hardened=${hardened}`, {
+      const res = await fetch(`${ API_BASE } /v1/agent / run ? hardened = ${ hardened } `, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ scenario_id: sid }),
@@ -1354,7 +1449,7 @@ function setupMockAgentHarness() {
       const data = await res.json();
       outBlock.textContent = JSON.stringify(data, null, 2);
     } catch (err) {
-      outBlock.textContent = `Error: ${err.message}`;
+      outBlock.textContent = `Error: ${ err.message } `;
     } finally {
       btn.disabled = false;
       btn.textContent = 'Send Test Message';
@@ -1368,7 +1463,7 @@ function setupMockAgentHarness() {
 
 async function loadScenarios() {
   try {
-    const res = await fetch(`${API_BASE}/v1/scenarios`);
+    const res = await fetch(`${ API_BASE } /v1/scenarios`);
     if (!res.ok) return;
     allScenarios = await res.json();
     populateScenariosCheckboxes();
@@ -1380,11 +1475,11 @@ function populateScenariosCheckboxes() {
   if (!container) return;
 
   container.innerHTML = allScenarios.map(s => `
-    <label class="scenario-checkbox-item">
-      <input type="checkbox" name="dispatch_scenarios" value="${s.scenario_id}" checked>
+  < label class="scenario-checkbox-item" >
+    <input type="checkbox" name="dispatch_scenarios" value="${s.scenario_id}" checked>
       <span>${escapeHtml(s.scenario_id)}</span>
     </label>
-  `).join('');
+`).join('');
 }
 
 function populateAgentDropdowns() {
@@ -1392,8 +1487,8 @@ function populateAgentDropdowns() {
   if (!select) return;
 
   select.innerHTML = registeredAgents.map(a => `
-    <option value="${a.agent_id}">${escapeHtml(a.name)} (${a.adapter_type})</option>
-  `).join('');
+  < option value = "${a.agent_id}" > ${ escapeHtml(a.name) } (${ a.adapter_type })</option >
+    `).join('');
 }
 
 function populateAssessmentDropdowns() {
@@ -1401,8 +1496,8 @@ function populateAssessmentDropdowns() {
   if (!select) return;
 
   select.innerHTML = registeredAssessments.map(a => `
-    <option value="${a.assessment_id}">${escapeHtml(a.title)}</option>
-  `).join('');
+    < option value = "${a.assessment_id}" > ${ escapeHtml(a.title) }</option >
+      `).join('');
 }
 
 function populateCompareDropdowns() {
@@ -1411,8 +1506,8 @@ function populateCompareDropdowns() {
   if (!curSelect || !baseSelect) return;
 
   const options = pastRuns.map(r => `
-    <option value="${r.run_id}">Run ${r.run_id.substring(0, 8)} (${r.summary?.FAIL || 0} Issues, ${r.summary?.PASS || 0} Passed)</option>
-  `).join('');
+      < option value = "${r.run_id}" > Run ${ r.run_id.substring(0, 8) } (${ r.summary?.FAIL || 0 } Issues, ${ r.summary?.PASS || 0 } Passed)</option >
+        `).join('');
 
   curSelect.innerHTML = options;
   baseSelect.innerHTML = options;
@@ -1461,226 +1556,234 @@ function setupModals() {
     }
 
     try {
-      const res = await fetch(`${API_BASE}/v1/assessments/${assessId}/runs`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Idempotency-Key': idem || `run-${Date.now()}`,
+      const res = await fetch(`${ API_BASE } /v1/assessments / ${ assessId }/runs`, {
+method: 'POST',
+  headers: {
+  'Content-Type': 'application/json',
+    'Idempotency-Key': idem || `run-${Date.now()}`,
         },
-        body: JSON.stringify({
-          scenario_pack: pack,
-          scenarios: checked,
-          model_budget_tokens: 5000,
-          hardened: false,
-        }),
+body: JSON.stringify({
+  scenario_pack: pack,
+  scenarios: checked,
+  model_budget_tokens: 5000,
+  hardened: false,
+}),
       });
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.message || 'Run dispatch failed');
-      }
+if (!res.ok) {
+  const err = await res.json().catch(() => ({}));
+  throw new Error(err.message || 'Run dispatch failed');
+}
 
-      closeModal('modal-dispatch-run');
-      showToast('✓ Assessment run started successfully!', 'success');
-      await refreshAllData();
-      switchTab('test-runs');
+closeModal('modal-dispatch-run');
+showToast('✓ Assessment run started successfully!', 'success');
+await refreshAllData();
+switchTab('test-runs');
     } catch (err) {
-      showToast(err.message, 'error');
-    }
+  showToast(err.message, 'error');
+}
   });
 
-  // Modal 3: Register Agent
-  document.getElementById('btn-open-register-agent-modal').addEventListener('click', () => {
-    openModal('modal-register-agent');
-  });
+// Modal 3: Register Agent
+document.getElementById('btn-open-register-agent-modal').addEventListener('click', () => {
+  openModal('modal-register-agent');
+});
 
-  document.getElementById('form-register-agent').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const name = document.getElementById('m-agent-name').value.trim();
-    const adapter = document.getElementById('m-agent-adapter').value;
-    const endpoint = document.getElementById('m-agent-endpoint').value.trim();
-    const hostsStr = document.getElementById('m-agent-hosts').value.trim();
-    const scope = document.getElementById('m-agent-scope').value.trim();
-    const hosts = hostsStr ? hostsStr.split(',').map(h => h.trim()).filter(Boolean) : ['127.0.0.1', 'localhost'];
+document.getElementById('form-register-agent').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = document.getElementById('m-agent-name').value.trim();
+  const adapter = document.getElementById('m-agent-adapter').value;
+  const endpoint = document.getElementById('m-agent-endpoint').value.trim();
+  const hostsStr = document.getElementById('m-agent-hosts').value.trim();
+  const scope = document.getElementById('m-agent-scope').value.trim();
+  const hosts = hostsStr ? hostsStr.split(',').map(h => h.trim()).filter(Boolean) : ['127.0.0.1', 'localhost'];
 
-    try {
-      const res = await fetch(`${API_BASE}/v1/agents`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: name,
-          adapter_type: adapter,
-          endpoint_url: adapter === 'http' ? endpoint : null,
-          allowed_hosts: adapter === 'http' ? hosts : [],
-          scope_description: scope,
-          authorised: true,
-          environment: 'live',
-        }),
-      });
+  try {
+    const res = await fetch(`${API_BASE}/v1/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: name,
+        adapter_type: adapter,
+        endpoint_url: adapter === 'http' ? endpoint : null,
+        allowed_hosts: adapter === 'http' ? hosts : [],
+        scope_description: scope,
+        authorised: true,
+        environment: 'live',
+      }),
+    });
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.message || 'Failed to register agent');
-      }
-
-      closeModal('modal-register-agent');
-      showToast(`✓ Agent '${name}' saved in database (.db)!`, 'success');
-      await loadAgents();
-      switchTab('projects');
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
-
-  // Modal 4: Create Assessment Scope
-  document.getElementById('btn-open-create-assessment-modal').addEventListener('click', () => {
-    openModal('modal-create-assessment');
-  });
-
-  document.getElementById('form-create-assessment').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const title = document.getElementById('m-assess-title').value.trim();
-    const agentId = document.getElementById('m-assess-agent').value;
-    const scope = document.getElementById('m-assess-scope').value.trim();
-
-    try {
-      const res = await fetch(`${API_BASE}/v1/assessments`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: title,
-          agent_id: agentId,
-          scope: scope,
-        }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.message || 'Failed to create assessment');
-      }
-
-      closeModal('modal-create-assessment');
-      showToast('✓ Assessment template saved in database!', 'success');
-      await loadAssessments();
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
-
-  // Modal 5: Review Finding
-  document.getElementById('form-review-finding').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const findingId = document.getElementById('m-review-finding-id').textContent;
-    const decision = document.getElementById('m-review-decision').value;
-    const reason = document.getElementById('m-review-reason').value.trim();
-
-    try {
-      const res = await fetch(`${API_BASE}/v1/findings/${findingId}/reviews`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          decision: decision,
-          reason: reason,
-        }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.message || 'Failed to submit review');
-      }
-
-      closeModal('modal-review-finding');
-      showToast(`✓ Decision '${decision}' recorded!`, 'success');
-      document.getElementById('m-review-reason').value = '';
-      await loadFindings();
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
-
-  // Modal 6: Generate Report
-  document.getElementById('form-generate-report').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const runId = document.getElementById('m-report-run-id').value;
-    const format = document.getElementById('m-report-format').value;
-
-    try {
-      const res = await fetch(`${API_BASE}/v1/runs/${runId}/report`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ format: format }),
-      });
-
-      if (!res.ok) throw new Error('Report generation failed');
-      const artifact = await res.json();
-      closeModal('modal-generate-report');
-      showToast('✓ Report generated! Initiating download...', 'success');
-      window.open(`${API_BASE}/v1/reports/${artifact.artifact_id}/download`, '_blank');
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
-
-  // Modal 7: Configure Pricing Plan
-  document.getElementById('btn-open-create-plan-modal').addEventListener('click', () => {
-    openModal('modal-create-plan');
-  });
-
-  document.getElementById('form-create-plan').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const name = document.getElementById('m-plan-name').value.trim();
-    const price = parseInt(document.getElementById('m-plan-price').value) || 0;
-    const interval = document.getElementById('m-plan-interval').value;
-    const agents = parseInt(document.getElementById('m-plan-agents').value) || 10;
-    const runs = parseInt(document.getElementById('m-plan-runs').value) || 50;
-
-    try {
-      const res = await fetch(`${API_BASE}/v1/plans`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: name,
-          base_amount_minor: price,
-          billing_interval: interval,
-          included_agents: agents,
-          maximum_runs: runs,
-          included_scenarios: runs * 10,
-          retention_days: 30,
-          active: true,
-        }),
-      });
-
-      if (!res.ok) throw new Error('Failed to save plan');
-      closeModal('modal-create-plan');
-      showToast(`✓ Pricing plan '${name}' saved!`, 'success');
-      await loadBilling();
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
-
-  // Compare Runs Modal
-  document.getElementById('btn-open-compare-modal').addEventListener('click', () => {
-    populateCompareDropdowns();
-    openModal('modal-compare-runs');
-  });
-
-  document.getElementById('btn-execute-comparison').addEventListener('click', async () => {
-    const curRun = document.getElementById('compare-modal-current-run').value;
-    const baseRun = document.getElementById('compare-modal-baseline-run').value;
-    const container = document.getElementById('compare-results-container');
-
-    if (!curRun || !baseRun) {
-      showToast('Please select both runs.', 'error');
-      return;
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || 'Failed to register agent');
     }
 
-    try {
-      const res = await fetch(`${API_BASE}/v1/runs/${curRun}/compare/${baseRun}`);
-      if (!res.ok) throw new Error('Comparison failed');
-      const comp = await res.json();
+    closeModal('modal-register-agent');
+    showToast(`✓ Agent '${name}' saved in database (.db)!`, 'success');
+    await loadAgents();
+    switchTab('projects');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+});
 
-      container.innerHTML = `
+// Modal 4: Create Assessment Scope
+document.getElementById('btn-open-create-assessment-modal').addEventListener('click', () => {
+  openModal('modal-create-assessment');
+});
+
+document.getElementById('form-create-assessment').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const title = document.getElementById('m-assess-title').value.trim();
+  const agentId = document.getElementById('m-assess-agent').value;
+  const scope = document.getElementById('m-assess-scope').value.trim();
+
+  try {
+    const res = await fetch(`${API_BASE}/v1/assessments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: title,
+        agent_id: agentId,
+        scope: scope,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || 'Failed to create assessment');
+    }
+
+    closeModal('modal-create-assessment');
+    showToast('✓ Assessment template saved in database!', 'success');
+    await loadAssessments();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+});
+
+// Modal 5: Review Finding
+document.getElementById('form-review-finding').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const findingId = document.getElementById('m-review-finding-id').textContent;
+  const decision = document.getElementById('m-review-decision').value;
+  const reason = document.getElementById('m-review-reason').value.trim();
+
+  try {
+    const res = await fetch(`${API_BASE}/v1/findings/${findingId}/reviews`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        decision: decision,
+        reason: reason,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || 'Failed to submit review');
+    }
+
+    closeModal('modal-review-finding');
+    showToast(`✓ Decision '${decision}' recorded!`, 'success');
+    document.getElementById('m-review-reason').value = '';
+    await loadFindings();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+});
+
+// Modal 6: Generate Report
+document.getElementById('form-generate-report').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const runId = document.getElementById('m-report-run-id').value;
+  const format = document.getElementById('m-report-format').value;
+
+  try {
+    const res = await fetch(`${API_BASE}/v1/runs/${runId}/report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ format: format }),
+    });
+
+    if (!res.ok) throw new Error('Report generation failed');
+    const artifact = await res.json();
+    closeModal('modal-generate-report');
+    showToast('✓ Report generated! Initiating download...', 'success');
+    window.open(`${API_BASE}/v1/reports/${artifact.artifact_id}/download`, '_blank');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+});
+
+// Modal 7: Configure Pricing Plan
+document.getElementById('btn-open-create-plan-modal').addEventListener('click', () => {
+  openModal('modal-create-plan');
+});
+
+document.getElementById('form-create-plan').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = document.getElementById('m-plan-name').value.trim();
+  let price = parseInt(document.getElementById('m-plan-price').value) || 0;
+  // If entered in pounds (e.g. 500 for £500), convert to pence
+  if (price > 0 && price < 10000) {
+    price = price * 100;
+  }
+  const interval = document.getElementById('m-plan-interval').value;
+  const agents = parseInt(document.getElementById('m-plan-agents').value) || 10;
+  const runs = parseInt(document.getElementById('m-plan-runs').value) || 50;
+
+  try {
+    const res = await fetch(`${API_BASE}/v1/plans`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: name,
+        base_amount_minor: price,
+        price_amount: price,
+        billing_interval: interval,
+        included_agents: agents,
+        maximum_runs: runs,
+        included_scenarios: runs * 10,
+        retention_days: 30,
+        active: true,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || err.detail || 'Failed to save plan');
+    }
+    closeModal('modal-create-plan');
+    showToast(`✓ Pricing plan '${name}' saved!`, 'success');
+    await loadBilling();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+});
+
+// Compare Runs Modal
+document.getElementById('btn-open-compare-modal').addEventListener('click', () => {
+  populateCompareDropdowns();
+  openModal('modal-compare-runs');
+});
+
+document.getElementById('btn-execute-comparison').addEventListener('click', async () => {
+  const curRun = document.getElementById('compare-modal-current-run').value;
+  const baseRun = document.getElementById('compare-modal-baseline-run').value;
+  const container = document.getElementById('compare-results-container');
+
+  if (!curRun || !baseRun) {
+    showToast('Please select both runs.', 'error');
+    return;
+  }
+
+  try {
+    const res = await fetch(`${API_BASE}/v1/runs/${curRun}/compare/${baseRun}`);
+    if (!res.ok) throw new Error('Comparison failed');
+    const comp = await res.json();
+
+    container.innerHTML = `
         <div style="background: var(--bg-card-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 12px; margin-bottom: 12px; font-size: 0.82rem;">
           <span>Issues Fixed: <strong style="color: var(--accent-green);">${comp.resolved_failures}</strong></span> &bull;
           <span>New Issues: <strong style="color: var(--accent-red);">${comp.new_failures}</strong></span> &bull;
@@ -1696,10 +1799,10 @@ function setupModals() {
           `).join('')}
         </div>
       `;
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  });
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+});
 }
 
 window.openReportModal = (runId) => {

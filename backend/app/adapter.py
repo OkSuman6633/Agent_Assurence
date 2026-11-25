@@ -23,6 +23,11 @@ class AdapterError(Exception):
     pass
 
 
+class AgentConnectionError(AdapterError):
+    """Raised when no agent is reachable/listening at the target host/port."""
+    pass
+
+
 async def invoke_agent(
     agent: AgentManifest | dict[str, Any],
     run_id: str,
@@ -107,32 +112,56 @@ async def _invoke_http_target(
     parsed = urlparse(endpoint_url)
     clean_base = endpoint_url.rstrip("/")
 
-    # If the user provided a bare URL (e.g. http://127.0.0.1:8001 or http://localhost:8000)
+    # If the user provided a bare URL (e.g. http://127.0.0.1:8001 or https://my-agent.example.com)
     candidate_urls = [endpoint_url]
     if not parsed.path or parsed.path == "/":
-        # Check standard endpoints: /v1/agent/run, /run
+        # Probe standard Assurance, ADK, OpenAI, and common REST agent routes
         candidate_urls = [
             f"{clean_base}/v1/agent/run",
             f"{clean_base}/run",
+            f"{clean_base}/chat",
+            f"{clean_base}/api/chat",
+            f"{clean_base}/invoke",
+            f"{clean_base}/v1/chat/completions",
+            f"{clean_base}/query",
+            f"{clean_base}/ask",
             endpoint_url,
         ]
+
+    # Alternate prompt payload formats if a deployed agent rejects the full Assurance schema with 400/422
+    fallback_payloads = [
+        {"prompt": scenario.input_text},
+        {"message": scenario.input_text},
+        {"query": scenario.input_text},
+        {"input": scenario.input_text},
+        {"messages": [{"role": "user", "content": scenario.input_text}]},
+    ]
 
     last_error: Exception | None = None
     data: Any = None
 
-    async with httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=False) as client:
         # Check if Google ADK agent on any port or host
         try:
-            adk_res = await _try_adk_invocation(client, clean_base, scenario.input_text)
+            adk_res = await _try_adk_invocation(client, clean_base, scenario.input_text, headers=headers)
             if adk_res is not None:
                 return _normalize_agent_response(adk_res, scenario)
         except Exception as adk_exc:
             last_error = adk_exc
 
-        # Try standard endpoints
+        # Try candidate endpoints
         for url in candidate_urls:
             try:
                 res = await client.post(url, json=payload, headers=headers)
+
+                # If deployed agent rejects full payload schema (400/422), retry with common prompt shapes
+                if res.status_code in (400, 422):
+                    for alt_payload in fallback_payloads:
+                        alt_res = await client.post(url, json=alt_payload, headers=headers)
+                        if alt_res.status_code == 200:
+                            res = alt_res
+                            break
+
                 if res.status_code == 200:
                     try:
                         data = res.json()
@@ -141,6 +170,7 @@ async def _invoke_http_target(
                         data = {"output": res.text, "status_code": 200}
                         break
                 elif res.status_code in (404, 405) and len(candidate_urls) > 1:
+                    last_error = AdapterError(f"Endpoint {url} returned HTTP {res.status_code} (Not Found / Method Not Allowed).")
                     continue
                 elif res.status_code >= 500:
                     err_text = res.text[:300] or "Internal Server Error"
@@ -152,33 +182,28 @@ async def _invoke_http_target(
                     }
                     break
                 else:
-                    res.raise_for_status()
+                    detail = res.text[:250].strip() or res.reason_phrase or "Request rejected"
+                    raise AdapterError(f"Agent at {url} rejected the request (HTTP {res.status_code}): {detail}")
             except httpx.ConnectError as exc:
                 last_error = exc
-                continue
-            except httpx.HTTPStatusError as exc:
-                last_error = exc
-                if exc.response.status_code in (404, 405) and len(candidate_urls) > 1:
-                    continue
-                if exc.response.status_code >= 500:
-                    err_text = exc.response.text[:300] or "Internal Server Error"
-                    data = {
-                        "output": f"Internal Server Error (HTTP {exc.response.status_code}): {err_text}",
-                        "error": err_text,
-                        "status_code": exc.response.status_code,
-                        "is_server_error": True,
-                    }
-                    break
-                raise AdapterError(f"Agent endpoint returned HTTP {exc.response.status_code}: {exc.response.text[:200]}") from exc
+                # Port has no listener at all — no need to probe 8 more paths on the same dead port
+                break
+            except AdapterError:
+                raise
             except (httpx.TimeoutException, httpx.RequestError) as exc:
                 last_error = exc
                 continue
 
     if data is None:
         if isinstance(last_error, httpx.ConnectError):
-            raise AdapterError(f"Could not connect to agent at {endpoint_url}. Please ensure your agent server is running and accessible.")
+            raise AgentConnectionError(
+                f"No agent is running at {endpoint_url} (connection refused). "
+                "Please start your agent server on this port or verify the endpoint URL."
+            )
         elif isinstance(last_error, httpx.TimeoutException):
-            raise AdapterError(f"Agent at {endpoint_url} timed out after {timeout_seconds}s.")
+            raise AdapterError(f"Agent at {endpoint_url} timed out after {timeout_seconds}s without responding.")
+        elif isinstance(last_error, AdapterError):
+            raise last_error
         elif last_error:
             raise AdapterError(f"Agent request to {endpoint_url} failed: {last_error}")
         else:
@@ -187,11 +212,17 @@ async def _invoke_http_target(
     return _normalize_agent_response(data, scenario)
 
 
-async def _try_adk_invocation(client: httpx.AsyncClient, base_url: str, input_text: str) -> dict[str, Any] | None:
+async def _try_adk_invocation(
+    client: httpx.AsyncClient,
+    base_url: str,
+    input_text: str,
+    headers: dict[str, str] | None = None,
+) -> dict[str, Any] | None:
     """Helper to detect and invoke Google ADK agent dynamically on any port/endpoint."""
+    req_headers = headers or {}
     try:
         # 1. Probe /list-apps to verify if this is an ADK server and discover the app name
-        list_res = await client.get(f"{base_url}/list-apps", timeout=3.0)
+        list_res = await client.get(f"{base_url}/list-apps", headers=req_headers, timeout=3.0)
         if list_res.status_code != 200:
             return None
         apps = list_res.json()
@@ -206,6 +237,7 @@ async def _try_adk_invocation(client: httpx.AsyncClient, base_url: str, input_te
             sess_res = await client.post(
                 f"{base_url}/apps/{app_name}/users/{user_id}/sessions",
                 json={},
+                headers=req_headers,
                 timeout=5.0,
             )
             if sess_res.status_code in (200, 201):
@@ -223,6 +255,7 @@ async def _try_adk_invocation(client: httpx.AsyncClient, base_url: str, input_te
                 "sessionId": session_id,
                 "newMessage": {"role": "user", "parts": [{"text": input_text}]},
             },
+            headers=req_headers,
             timeout=25.0,
         )
         if run_res.status_code == 200:
@@ -275,7 +308,17 @@ def _normalize_agent_response(data: Any, scenario: Any) -> dict[str, Any]:
             output = " ".join(output_parts).strip()
 
         if not output:
-            output = str(data.get("output") or data.get("response") or data.get("content") or data.get("text") or "")
+            output = str(
+                data.get("output")
+                or data.get("response")
+                or data.get("answer")
+                or data.get("reply")
+                or data.get("result")
+                or data.get("message")
+                or data.get("content")
+                or data.get("text")
+                or ""
+            )
 
         # Check OpenAI format choices[0].message
         if not output and "choices" in data and isinstance(data["choices"], list) and len(data["choices"]) > 0:

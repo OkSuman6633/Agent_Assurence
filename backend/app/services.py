@@ -651,67 +651,69 @@ class BillingService:
         self.repo = repo
 
     async def seed_default_plans(self) -> None:
-        """Seed the 4 proposed pricing plans from Doc 3 §3 if none exist."""
-        existing = await self.repo.list_plans()
-        if existing:
-            return
-
+        """Seed or update the 4 proposed pricing plans from Doc 3 §3."""
         default_plans = [
             PricingPlan(
                 plan_id="starter_assessment_v1",
                 name="Starter assessment",
                 description="One-off baseline evaluation for a single agent.",
-                price_amount=150000,  # £1,500 in minor units
+                base_amount_minor=150000,  # £1,500 in minor units
                 currency="GBP",
                 billing_interval="one_off",
                 included_agents=1,
                 included_scenarios=50,
+                maximum_runs=10,
                 retention_days=14,
                 reviewer_seats=1,
-                status="proposed",
+                active=True,
             ),
             PricingPlan(
                 plan_id="professional_assessment_v1",
                 name="Professional",
                 description="Comprehensive evaluation with reviewer workshop and remediation backlog.",
-                price_amount=350000,  # £3,500 in minor units
+                base_amount_minor=350000,  # £3,500 in minor units
                 currency="GBP",
                 billing_interval="one_off",
                 included_agents=3,
                 included_scenarios=200,
+                maximum_runs=50,
                 retention_days=30,
                 reviewer_seats=3,
-                status="proposed",
+                active=True,
             ),
             PricingPlan(
                 plan_id="team_regression_v1",
                 name="Team regression",
                 description="Monthly recurring assurance with automated regression comparisons.",
-                price_amount=65000,  # £650 / month in minor units
+                base_amount_minor=65000,  # £650 / month in minor units
                 currency="GBP",
                 billing_interval="monthly",
                 included_agents=1,
                 included_scenarios=100,
+                maximum_runs=100,
                 retention_days=60,
                 reviewer_seats=2,
-                status="proposed",
+                active=True,
             ),
             PricingPlan(
                 plan_id="growth_regression_v1",
                 name="Growth regression",
                 description="High-cadence multi-agent assurance with scheduled execution and API access.",
-                price_amount=175000,  # £1,750 / month in minor units
+                base_amount_minor=175000,  # £1,750 / month in minor units
                 currency="GBP",
                 billing_interval="monthly",
                 included_agents=5,
                 included_scenarios=800,
+                maximum_runs=500,
                 retention_days=90,
                 reviewer_seats=5,
-                status="proposed",
+                active=True,
             ),
         ]
         for plan in default_plans:
-            await self.repo.save_plan(plan)
+            existing = await self.repo.get_plan(plan.plan_id)
+            if not existing or existing.base_amount_minor == 0:
+                await self.repo.save_plan(plan)
 
     async def list_plans(self) -> list[PricingPlan]:
         await self.seed_default_plans()
@@ -740,14 +742,23 @@ class BillingService:
         entitlement = await self.repo.get_entitlement(user.tenant_id)
         if not entitlement:
             # Seed default starter entitlement for tenant
+            plan = await self.repo.get_plan("starter_assessment_v1")
             entitlement = TenantEntitlement(
                 tenant_id=user.tenant_id,
                 plan_id="starter_assessment_v1",
-                agents_limit=5,
-                runs_limit=50,
-                scenarios_limit=500,
+                plan_name=plan.name if plan else "Starter assessment",
+                agents_limit=plan.included_agents if plan else 1,
+                runs_limit=plan.maximum_runs if plan else 10,
+                scenarios_limit=plan.included_scenarios if plan else 50,
+                retention_days=plan.retention_days if plan else 14,
             )
             await self.repo.save_entitlement(entitlement)
+
+        plan = await self.repo.get_plan(entitlement.plan_id)
+        plan_name = getattr(entitlement, "plan_name", "") or (plan.name if plan else entitlement.plan_id)
+        billing_interval = plan.billing_interval if plan else "monthly"
+        base_amount_minor = plan.base_amount_minor if plan else 0
+        currency = plan.currency if plan else "GBP"
 
         runs = await self.repo.list_runs(user.tenant_id)
         agents = await self.repo.list_agents(user.tenant_id)
@@ -759,6 +770,10 @@ class BillingService:
         return {
             "tenant_id": user.tenant_id,
             "plan_id": entitlement.plan_id,
+            "plan_name": plan_name,
+            "currency": currency,
+            "base_amount_minor": base_amount_minor,
+            "billing_interval": billing_interval,
             "agents_count": len(agents),
             "agents_limit": entitlement.agents_limit,
             "runs_count": len(runs),

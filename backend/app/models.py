@@ -13,7 +13,7 @@ from enum import Enum
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, HttpUrl, field_validator
+from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
 
 # ─── Enums ────────────────────────────────────────────────────────────
@@ -299,6 +299,7 @@ class PricingPlan(BaseModel):
     description: str = ""
     currency: str = "GBP"
     base_amount_minor: int = 0  # Amount in pence/cents
+    price_amount: int | None = None
     billing_interval: Literal["one_off", "monthly", "annual"] = "one_off"
     included_agents: int = 1
     included_scenarios: int = 50
@@ -310,6 +311,16 @@ class PricingPlan(BaseModel):
     effective_from: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     overage_unit_price_minor: int = 0
     active: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_amounts(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if "price_amount" in data and not data.get("base_amount_minor"):
+                data["base_amount_minor"] = data["price_amount"]
+            elif "base_amount_minor" in data and not data.get("price_amount"):
+                data["price_amount"] = data["base_amount_minor"]
+        return data
 
 
 class TenantEntitlement(BaseModel):
